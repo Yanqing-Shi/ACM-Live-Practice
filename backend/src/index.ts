@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
+import { exec } from "child_process";
+import fs from "fs";
 
 const app = express();
 app.use(cors());
@@ -47,6 +49,10 @@ type UpdateFileMessage = {
 type SwitchFileMessage = {
   type: "switch_file";
   path: string;
+};
+
+type RunCodeMessage = {
+  type: "run_code";
 };
 
 type ClientMessage =
@@ -167,7 +173,37 @@ function getClientRoom(socket: WebSocket) {
     userName: meta.userName,
   };
 }
+function removeUserFromOtherRooms(userName: string, targetRoomId: string): void {
+  for (const [otherRoomId, otherRoom] of Object.entries(rooms)) {
+    if (otherRoomId === targetRoomId) continue;
 
+    const wasInRoom = otherRoom.clients.some(
+      (client) => client.userName === userName
+    );
+
+    if (!wasInRoom) continue;
+
+    otherRoom.clients = otherRoom.clients.filter(
+      (client) => client.userName !== userName
+    );
+
+    otherRoom.controlRequests = otherRoom.controlRequests.filter(
+      (name) => name !== userName
+    );
+
+    if (otherRoom.currentController === userName) {
+      otherRoom.currentController =
+        otherRoom.clients.length > 0 ? otherRoom.clients[0].userName : null;
+    }
+
+    if (otherRoom.clients.length === 0) {
+      delete rooms[otherRoomId];
+      console.log(`[ROOM REMOVED] ${otherRoomId}`);
+    } else {
+      broadcastRoomState(otherRoomId);
+    }
+  }
+}
 app.get("/", (_req, res) => {
   res.json({
     message: "ICPC Collab Backend is running",
@@ -272,7 +308,41 @@ wss.on("connection", (socket: WebSocket) => {
         socket.close();
         return;
       }
+      if (data.type === "run_code") {
+        const context = getClientRoom(socket);
+        if (!context) return;
 
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can run code",
+          });
+          return;
+        }
+
+        const mainFile = room.files.find(f => f.path === "main.cpp");
+        const inputFile = room.files.find(f => f.path === "input.in");
+
+        if (!mainFile) return;
+
+        fs.writeFileSync("temp.cpp", mainFile.content);
+        fs.writeFileSync("input.txt", inputFile?.content || "");
+
+        exec("g++ temp.cpp -o temp.exe && temp.exe < input.txt", (err, stdout, stderr) => {
+          const output = err ? stderr : stdout;
+
+          const message = {
+            type: "run_result",
+            output,
+          };
+
+          socket.send(JSON.stringify(message));
+        });
+
+        return;
+      }
       if (data.type === "request_control") {
         const context = getClientRoom(socket);
         

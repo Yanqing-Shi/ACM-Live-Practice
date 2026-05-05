@@ -53,8 +53,20 @@ type SwitchFileMessage = {
   path: string;
 };
 
+type CreateFileMessage = {
+  type: "create_file";
+  path: string;
+};
+
+type CreateFolderMessage = {
+  type: "create_folder";
+  path: string;
+};
+
 type RunCodeMessage = {
   type: "run_code";
+  stdinMode?: "console" | "file";
+  consoleInput?: string;
 };
 
 type ClientMessage =
@@ -65,7 +77,9 @@ type ClientMessage =
   | RejectControlMessage
   | UpdateFileMessage
   | SwitchFileMessage
-  | RunCodeMessage;
+  | RunCodeMessage
+  | CreateFileMessage
+  | CreateFolderMessage;
 
 type RoomStateMessage = {
   type: "room_state";
@@ -74,6 +88,7 @@ type RoomStateMessage = {
   currentController: string | null;
   controlRequests: string[];
   files: FileItem[];
+  folders: string[];
   activeFilePath: string;
 };
 
@@ -104,6 +119,7 @@ type Room = {
   currentController: string | null;
   controlRequests: string[];
   files: FileItem[];
+  folders: string[];
   activeFilePath: string;
 };
 
@@ -127,6 +143,7 @@ const message: RoomStateMessage = {
   currentController: room.currentController,
   controlRequests: room.controlRequests,
   files: room.files,
+  folders: room.folders,
   activeFilePath: room.activeFilePath,
 };
 
@@ -278,6 +295,127 @@ function getClientRoom(socket: WebSocket) {
     userName: meta.userName,
   };
 }
+
+function isValidWorkspacePath(targetPath: string): boolean {
+  if (!targetPath) return false;
+  if (targetPath.includes("..")) return false;
+  if (targetPath.startsWith("/") || targetPath.startsWith("\\")) return false;
+  if (targetPath.includes("\\")) return false;
+  return true;
+}
+
+function getParentFolders(targetPath: string): string[] {
+  const parts = targetPath.split("/");
+  const folders: string[] = [];
+
+  for (let i = 1; i < parts.length; i++) {
+    folders.push(parts.slice(0, i).join("/"));
+  }
+
+  return folders;
+}
+function ensureDirForFile(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), {
+    recursive: true,
+  });
+}
+
+function workspacePathToDiskPath(runDir: string, workspacePath: string): string {
+  const parts = workspacePath.split("/").filter(Boolean);
+  return path.join(runDir, ...parts);
+}
+
+function writeWorkspaceToDisk(runDir: string, files: FileItem[]): void {
+  for (const file of files) {
+    const diskPath = workspacePathToDiskPath(runDir, file.path);
+    ensureDirForFile(diskPath);
+    fs.writeFileSync(diskPath, file.content, "utf8");
+  }
+}
+
+function shouldSyncBackFile(filePath: string, size: number): boolean {
+  if (size > 1024 * 1024) return false;
+
+  const normalized = filePath.replace(/\\/g, "/");
+  const baseName = path.basename(normalized).toLowerCase();
+
+  if (baseName === "main.exe") return false;
+  if (baseName === "main") return false;
+
+  const allowedExtensions = [
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".c",
+    ".py",
+    ".java",
+    ".in",
+    ".out",
+    ".ans",
+    ".txt",
+    ".log",
+    ".md",
+    ".csv",
+  ];
+
+  return allowedExtensions.some((ext) => normalized.endsWith(ext));
+}
+
+function scanWorkspaceFiles(runDir: string): FileItem[] {
+  const result: FileItem[] = [];
+
+  function walk(currentDir: string): void {
+    const entries = fs.readdirSync(currentDir, {
+      withFileTypes: true,
+    });
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      const stat = fs.statSync(fullPath);
+      const relativePath = path.relative(runDir, fullPath).replace(/\\/g, "/");
+
+      if (!shouldSyncBackFile(relativePath, stat.size)) continue;
+
+      result.push({
+        path: relativePath,
+        content: fs.readFileSync(fullPath, "utf8"),
+      });
+    }
+  }
+
+  walk(runDir);
+  return result;
+}
+
+function mergeSyncedFilesIntoRoom(room: Room, syncedFiles: FileItem[]): void {
+  for (const syncedFile of syncedFiles) {
+    const existing = room.files.find((f) => f.path === syncedFile.path);
+
+    if (existing) {
+      existing.content = syncedFile.content;
+    } else {
+      room.files.push(syncedFile);
+    }
+
+    const parentFolders = getParentFolders(syncedFile.path);
+
+    for (const folder of parentFolders) {
+      if (!room.folders.includes(folder)) {
+        room.folders.push(folder);
+      }
+    }
+  }
+}
+
+
 function removeUserFromOtherRooms(userName: string, targetRoomId: string): void {
   for (const [otherRoomId, otherRoom] of Object.entries(rooms)) {
     if (otherRoomId === targetRoomId) continue;
@@ -359,21 +497,18 @@ wss.on("connection", (socket: WebSocket) => {
             clients: [],
             currentController: null,
             controlRequests: [],
+            folders: [],
             files: [
               {
                 path: "main.cpp",
                 content: `#include <bits/stdc++.h>
-          using namespace std;
+            using namespace std;
 
-          int main() {
-              cout << "Hello ICPC!" << endl;
-              return 0;
-          }
-          `,
-              },
-              {
-                path: "input.in",
-                content: "",
+            int main() {
+                cout << "Hello ICPC!" << endl;
+                return 0;
+            }
+            `,
               },
             ],
             activeFilePath: "main.cpp",
@@ -428,7 +563,6 @@ wss.on("connection", (socket: WebSocket) => {
         }
 
         const activeFile = room.files.find((f) => f.path === room.activeFilePath);
-        const inputFile = room.files.find((f) => f.path === "input.in");
 
         if (!activeFile) {
           sendMessage(socket, {
@@ -438,13 +572,32 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
+        if (!activeFile.path.endsWith(".cpp")) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only .cpp files can be run for now",
+          });
+          return;
+        }
+
         const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "icpc-run-"));
-        const sourcePath = path.join(runDir, "main.cpp");
         const exeName = process.platform === "win32" ? "main.exe" : "main";
         const exePath = path.join(runDir, exeName);
 
+        const activeDir = path.posix.dirname(activeFile.path);
+        const activeDiskDir =
+          activeDir === "."
+            ? runDir
+            : workspacePathToDiskPath(runDir, activeDir);
+
+        const stdinMode = data.stdinMode || "console";
+
         try {
-          fs.writeFileSync(sourcePath, activeFile.content, "utf8");
+          writeWorkspaceToDisk(runDir, room.files);
+
+          fs.mkdirSync(activeDiskDir, {
+            recursive: true,
+          });
 
           broadcastToRoom(roomId, {
             type: "run_result",
@@ -458,7 +611,14 @@ wss.on("connection", (socket: WebSocket) => {
 
           const compileResult = await runCommand(
             "g++",
-            ["main.cpp", "-std=c++17", "-O2", "-Wall", "-o", exeName],
+            [
+              workspacePathToDiskPath(runDir, activeFile.path),
+              "-std=c++17",
+              "-O2",
+              "-Wall",
+              "-o",
+              exePath,
+            ],
             {
               cwd: runDir,
               timeoutMs: 5000,
@@ -481,11 +641,28 @@ wss.on("connection", (socket: WebSocket) => {
             return;
           }
 
+          let stdin = "";
+
+          if (stdinMode === "console") {
+            stdin = data.consoleInput || "";
+          } else {
+            const inputPath =
+              activeDir === "."
+                ? "input.in"
+                : `${activeDir}/input.in`;
+
+            const inputFile = room.files.find((f) => f.path === inputPath);
+            stdin = inputFile?.content || "";
+          }
+
           const runResult = await runCommand(exePath, [], {
-            cwd: runDir,
-            input: inputFile?.content || "",
+            cwd: activeDiskDir,
+            input: stdin,
             timeoutMs: 3000,
           });
+
+          const syncedFiles = scanWorkspaceFiles(runDir);
+          mergeSyncedFilesIntoRoom(room, syncedFiles);
 
           let output = "";
 
@@ -493,6 +670,12 @@ wss.on("connection", (socket: WebSocket) => {
             output += `[Runtime error by ${userName}]\nProgram timed out after 3 seconds.\n\n`;
           } else {
             output += `[Finished by ${userName}]\nExit code: ${runResult.exitCode}\n\n`;
+          }
+
+          if (stdinMode === "console") {
+            output += `[Input mode: Console]\n\n`;
+          } else {
+            output += `[Input mode: File input.in]\n\n`;
           }
 
           if (runResult.stdout) {
@@ -504,8 +687,10 @@ wss.on("connection", (socket: WebSocket) => {
           }
 
           if (!runResult.stdout && !runResult.stderr) {
-            output += "(No output)\n";
+            output += "(No console output)\n";
           }
+
+          output += "\n[Workspace files synced]\n";
 
           broadcastToRoom(roomId, {
             type: "run_result",
@@ -516,6 +701,8 @@ wss.on("connection", (socket: WebSocket) => {
             timedOut: runResult.timedOut,
             runner: userName,
           });
+
+          broadcastRoomState(roomId);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
 
@@ -684,6 +871,114 @@ wss.on("connection", (socket: WebSocket) => {
         if (exists) {
           room.activeFilePath = data.path;
         }
+
+        broadcastRoomState(roomId);
+        return;
+      }
+      if (data.type === "create_folder") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can create folders",
+          });
+          return;
+        }
+
+        const folderPath = data.path.trim().replace(/\/+$/, "");
+
+        if (!isValidWorkspacePath(folderPath)) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Invalid folder path",
+          });
+          return;
+        }
+
+        const fileWithSamePath = room.files.some((f) => f.path === folderPath);
+
+        if (fileWithSamePath) {
+          sendMessage(socket, {
+            type: "error",
+            message: `A file named "${folderPath}" already exists`,
+          });
+          return;
+        }
+
+        const parentFolders = getParentFolders(folderPath);
+
+        for (const parent of parentFolders) {
+          if (!room.folders.includes(parent)) {
+            room.folders.push(parent);
+          }
+        }
+
+        if (!room.folders.includes(folderPath)) {
+          room.folders.push(folderPath);
+        }
+
+        broadcastRoomState(roomId);
+        return;
+      }
+
+      if (data.type === "create_file") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can create files",
+          });
+          return;
+        }
+
+        const newPath = data.path.trim();
+
+        if (!newPath) {
+          sendMessage(socket, {
+            type: "error",
+            message: "File name is required",
+          });
+          return;
+        }
+
+        if (newPath.includes("..") || newPath.startsWith("/") || newPath.startsWith("\\")) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Invalid file path",
+          });
+          return;
+        }
+
+        const alreadyExists = room.files.some((f) => f.path === newPath);
+
+        if (alreadyExists) {
+          sendMessage(socket, {
+            type: "error",
+            message: `File "${newPath}" already exists`,
+          });
+          return;
+        }
+        const parentFolders = getParentFolders(newPath);
+
+        for (const folder of parentFolders) {
+          if (!room.folders.includes(folder)) {
+            room.folders.push(folder);
+          }
+        }
+        room.files.push({
+          path: newPath,
+          content: "",
+        });
+
+        room.activeFilePath = newPath;
 
         broadcastRoomState(roomId);
         return;

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <meta charset="UTF-8" />
     <script src="https://unpkg.com/monaco-editor@0.45.0/min/vs/loader.js"></script>
   </head>
 
@@ -32,20 +33,84 @@
 
     <hr />
 
-    <h2>Shared Code</h2>
-    <p id="controllerInfo">Current controller: none</p>
-    <p id="editInfo">Editing status: not joined</p>
-    <div id="fileList"></div>
-    <div
-      id="editor"
-      style="width: 900px; height: 500px; border: 1px solid #ccc;"
-    ></div>
+    <h2>Shared Workspace</h2>
+      <p id="controllerInfo">Current controller: none</p>
+      <p id="editInfo">Editing status: not joined</p>
+
+      <div style="display: flex; gap: 12px; align-items: stretch;">
+        <aside
+          style="
+            width: 260px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            height: 500px;
+            overflow: auto;
+            font-family: monospace;
+          "
+        >
+          <h3 style="margin-top: 0;">Workspace</h3>
+
+          <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+            <button id="createFolder">New Folder</button>
+            <button id="createFile">New File</button>
+          </div>
+
+          <div id="fileList"></div>
+        </aside>
+
+        <main style="flex: 1;">
+          <div
+            id="editor"
+            style="width: 900px; height: 500px; border: 1px solid #ccc;"
+          ></div>
+        </main>
+      </div>
 
     <hr />
-    <button id="runCode">Run Code</button>
-    <pre id="log"></pre>
-    <h3>Output</h3>
-    <pre id="output"></pre>
+    <hr />
+
+    <h3>Console</h3>
+
+    <div style="margin-bottom: 8px;">
+      <button id="runCode">Run Code</button>
+
+      <label style="margin-left: 12px;">
+        Input mode:
+        <select id="stdinMode">
+          <option value="console">Console Input</option>
+          <option value="file">File input.in</option>
+        </select>
+      </label>
+    </div>
+
+    <div style="display: flex; gap: 12px;">
+      <div>
+        <h4>Console Input</h4>
+        <textarea
+          id="consoleInput"
+          style="width: 420px; height: 160px; font-family: monospace;"
+          placeholder="Type stdin here, e.g.&#10;2 3"
+        ></textarea>
+      </div>
+
+      <div>
+        <h4>Console Output</h4>
+        <pre
+          id="consoleOutput"
+          style="
+            width: 520px;
+            height: 160px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            overflow: auto;
+            background: #111;
+            color: #eee;
+          "
+        ></pre>
+      </div>
+    </div>
+
+    <pre id="log" style="display: none;"></pre>
 
     <script src="./app.js"></script>
   </body>

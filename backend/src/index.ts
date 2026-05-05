@@ -2,8 +2,10 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs";
+import path from "path";
+import os from "os";
 
 const app = express();
 app.use(cors());
@@ -62,8 +64,8 @@ type ClientMessage =
   | ApproveControlMessage
   | RejectControlMessage
   | UpdateFileMessage
-  | SwitchFileMessage;
-
+  | SwitchFileMessage
+  | RunCodeMessage;
 
 type RoomStateMessage = {
   type: "room_state";
@@ -80,7 +82,17 @@ type ErrorMessage = {
   message: string;
 };
 
-type ServerMessage = RoomStateMessage | ErrorMessage;
+type RunResultMessage = {
+  type: "run_result";
+  output: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  runner: string;
+};
+
+type ServerMessage = RoomStateMessage | ErrorMessage | RunResultMessage;
 
 type ClientInfo = {
   socket: WebSocket;
@@ -126,6 +138,99 @@ const message: RoomStateMessage = {
     }
   }
 }
+
+
+function broadcastToRoom(roomId: string, message: ServerMessage): void {
+  const room = rooms[roomId];
+  if (!room) return;
+
+  const serialized = JSON.stringify(message);
+
+  for (const client of room.clients) {
+    if (client.socket.readyState === WebSocket.OPEN) {
+      client.socket.send(serialized);
+    }
+  }
+}
+
+function runCommand(
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    input?: string;
+    timeoutMs: number;
+  }
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      shell: false,
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      if (finished) return;
+
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      if (finished) return;
+
+      finished = true;
+      clearTimeout(timer);
+
+      resolve({
+        stdout,
+        stderr: stderr + error.message,
+        exitCode: null,
+        timedOut,
+      });
+    });
+
+    child.on("close", (code) => {
+      if (finished) return;
+
+      finished = true;
+      clearTimeout(timer);
+
+      resolve({
+        stdout,
+        stderr,
+        exitCode: code,
+        timedOut,
+      });
+    });
+
+    if (options.input) {
+      child.stdin.write(options.input);
+    }
+
+    child.stdin.end();
+  });
+}
+
+
 
 function removeClientFromRoom(socket: WebSocket): void {
   const meta = socketMeta.get(socket);
@@ -229,7 +334,7 @@ const wss = new WebSocketServer({ server });
 wss.on("connection", (socket: WebSocket) => {
   console.log("[WS CONNECTED]");
 
-  socket.on("message", (raw: Buffer) => {
+  socket.on("message", async (raw: Buffer) => {
     try {
       const data = JSON.parse(raw.toString()) as ClientMessage;
 
@@ -322,24 +427,113 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const mainFile = room.files.find(f => f.path === "main.cpp");
-        const inputFile = room.files.find(f => f.path === "input.in");
+        const activeFile = room.files.find((f) => f.path === room.activeFilePath);
+        const inputFile = room.files.find((f) => f.path === "input.in");
 
-        if (!mainFile) return;
+        if (!activeFile) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Active file not found",
+          });
+          return;
+        }
 
-        fs.writeFileSync("temp.cpp", mainFile.content);
-        fs.writeFileSync("input.txt", inputFile?.content || "");
+        const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "icpc-run-"));
+        const sourcePath = path.join(runDir, "main.cpp");
+        const exeName = process.platform === "win32" ? "main.exe" : "main";
+        const exePath = path.join(runDir, exeName);
 
-        exec("g++ temp.cpp -o temp.exe && temp.exe < input.txt", (err, stdout, stderr) => {
-          const output = err ? stderr : stdout;
+        try {
+          fs.writeFileSync(sourcePath, activeFile.content, "utf8");
 
-          const message = {
+          broadcastToRoom(roomId, {
+            type: "run_result",
+            output: `[Running by ${userName}...]\n`,
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            timedOut: false,
+            runner: userName,
+          });
+
+          const compileResult = await runCommand(
+            "g++",
+            ["main.cpp", "-std=c++17", "-O2", "-Wall", "-o", exeName],
+            {
+              cwd: runDir,
+              timeoutMs: 5000,
+            }
+          );
+
+          if (compileResult.timedOut || compileResult.exitCode !== 0) {
+            broadcastToRoom(roomId, {
+              type: "run_result",
+              output:
+                `[Compile failed by ${userName}]\n\n` +
+                (compileResult.stderr || compileResult.stdout || "Compilation failed."),
+              stdout: compileResult.stdout,
+              stderr: compileResult.stderr,
+              exitCode: compileResult.exitCode,
+              timedOut: compileResult.timedOut,
+              runner: userName,
+            });
+
+            return;
+          }
+
+          const runResult = await runCommand(exePath, [], {
+            cwd: runDir,
+            input: inputFile?.content || "",
+            timeoutMs: 3000,
+          });
+
+          let output = "";
+
+          if (runResult.timedOut) {
+            output += `[Runtime error by ${userName}]\nProgram timed out after 3 seconds.\n\n`;
+          } else {
+            output += `[Finished by ${userName}]\nExit code: ${runResult.exitCode}\n\n`;
+          }
+
+          if (runResult.stdout) {
+            output += `stdout:\n${runResult.stdout}\n`;
+          }
+
+          if (runResult.stderr) {
+            output += `stderr:\n${runResult.stderr}\n`;
+          }
+
+          if (!runResult.stdout && !runResult.stderr) {
+            output += "(No output)\n";
+          }
+
+          broadcastToRoom(roomId, {
             type: "run_result",
             output,
-          };
+            stdout: runResult.stdout,
+            stderr: runResult.stderr,
+            exitCode: runResult.exitCode,
+            timedOut: runResult.timedOut,
+            runner: userName,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
 
-          socket.send(JSON.stringify(message));
-        });
+          broadcastToRoom(roomId, {
+            type: "run_result",
+            output: `[Run system error]\n${message}`,
+            stdout: "",
+            stderr: message,
+            exitCode: null,
+            timedOut: false,
+            runner: userName,
+          });
+        } finally {
+          fs.rmSync(runDir, {
+            recursive: true,
+            force: true,
+          });
+        }
 
         return;
       }

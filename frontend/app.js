@@ -2,7 +2,8 @@ let ws;
 let editor;
 let currentUserName = "";
 let isApplyingRemoteCode = false;
-
+let isApplyingRemoteConsoleInput = false;
+let isApplyingRemoteStdinMode = false;
 const log = document.getElementById("log");
 const roomIdInput = document.getElementById("roomId");
 const userNameInput = document.getElementById("userName");
@@ -13,7 +14,8 @@ const fileList = document.getElementById("fileList");
 let currentFiles = [];
 let currentFolders = [];
 let activeFilePath = "";
-let selectedFolderPath = "";
+let selectedPath = "";
+let selectedType = ""; // "file" or "folder"
 const expandedFolders = new Set();
 
 function write(msg) {
@@ -81,6 +83,14 @@ function sortTreeEntries(entries) {
   });
 }
 
+function getSelectedFolderForCreation() {
+  if (selectedType === "folder") {
+    return selectedPath;
+  }
+
+  return "";
+}
+
 function renderTreeNode(name, node, depth, fullPath) {
   const row = document.createElement("div");
 
@@ -88,21 +98,45 @@ function renderTreeNode(name, node, depth, fullPath) {
   row.style.lineHeight = "24px";
   row.style.whiteSpace = "nowrap";
   row.style.userSelect = "none";
+  row.style.display = "flex";
+  row.style.alignItems = "center";
+  row.style.gap = "6px";
+
+  const label = document.createElement("span");
+  label.style.flex = "1";
+
+  const actions = document.createElement("span");
+  actions.style.display = "none";
+  actions.style.gap = "4px";
+
+  const renameBtn = document.createElement("button");
+  renameBtn.textContent = "Rename";
+  renameBtn.style.fontSize = "11px";
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.textContent = "Delete";
+  deleteBtn.style.fontSize = "11px";
+
+  actions.appendChild(renameBtn);
+  actions.appendChild(deleteBtn);
 
   if (node.__type === "folder") {
     const isExpanded = expandedFolders.has(fullPath);
-    const isSelected = selectedFolderPath === fullPath;
+    const isSelected =
+      selectedType === "folder" && selectedPath === fullPath;
 
-    row.textContent = (isExpanded ? "▾ " : "▸ ") + name;
-    row.style.fontWeight = "bold";
+    label.textContent = (isExpanded ? "▾ " : "▸ ") + name;
+    label.style.fontWeight = "bold";
     row.style.cursor = "pointer";
 
     if (isSelected) {
       row.style.background = "#dbeafe";
+      actions.style.display = "flex";
     }
 
-    row.onclick = () => {
-      selectedFolderPath = fullPath;
+    label.onclick = () => {
+      selectedPath = fullPath;
+      selectedType = "folder";
 
       if (isExpanded) {
         expandedFolders.delete(fullPath);
@@ -113,6 +147,18 @@ function renderTreeNode(name, node, depth, fullPath) {
       renderFileList();
     };
 
+    renameBtn.onclick = (event) => {
+      event.stopPropagation();
+      renameSelectedItem("folder", fullPath);
+    };
+
+    deleteBtn.onclick = (event) => {
+      event.stopPropagation();
+      deleteSelectedItem("folder", fullPath);
+    };
+
+    row.appendChild(label);
+    row.appendChild(actions);
     fileList.appendChild(row);
 
     if (!isExpanded) return;
@@ -127,18 +173,26 @@ function renderTreeNode(name, node, depth, fullPath) {
     return;
   }
 
-  row.textContent = name;
+  const isSelected =
+    selectedType === "file" && selectedPath === node.path;
+
+  label.textContent = name;
   row.style.cursor = "pointer";
 
   if (node.path === activeFilePath) {
-    row.style.fontWeight = "bold";
-    row.style.background = "#e6f0ff";
+    label.style.fontWeight = "bold";
   }
 
-  row.onclick = () => {
+  if (isSelected) {
+    row.style.background = "#dbeafe";
+    actions.style.display = "flex";
+  }
+
+  label.onclick = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    selectedFolderPath = "";
+    selectedPath = node.path;
+    selectedType = "file";
 
     ws.send(
       JSON.stringify({
@@ -150,6 +204,18 @@ function renderTreeNode(name, node, depth, fullPath) {
     renderFileList();
   };
 
+  renameBtn.onclick = (event) => {
+    event.stopPropagation();
+    renameSelectedItem("file", node.path);
+  };
+
+  deleteBtn.onclick = (event) => {
+    event.stopPropagation();
+    deleteSelectedItem("file", node.path);
+  };
+
+  row.appendChild(label);
+  row.appendChild(actions);
   fileList.appendChild(row);
 }
 
@@ -224,6 +290,91 @@ function updateEditorPermission(currentController) {
     : "Editing status: read-only";
 }
 
+
+function renameSelectedItem(itemType, oldPath) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const newPath = prompt(`Rename ${oldPath} to:`, oldPath);
+
+  if (!newPath) return;
+
+  const cleanNewPath = newPath.trim();
+
+  if (!cleanNewPath || cleanNewPath === oldPath) return;
+
+  selectedPath = cleanNewPath;
+  selectedType = itemType;
+
+  if (itemType === "folder") {
+    expandedFolders.delete(oldPath);
+    expandedFolders.add(cleanNewPath);
+
+    const oldPrefix = oldPath + "/";
+    const renamedExpanded = [];
+
+    expandedFolders.forEach((folder) => {
+      if (folder.startsWith(oldPrefix)) {
+        renamedExpanded.push([
+          folder,
+          cleanNewPath + folder.slice(oldPath.length),
+        ]);
+      }
+    });
+
+    renamedExpanded.forEach(([oldFolder, newFolder]) => {
+      expandedFolders.delete(oldFolder);
+      expandedFolders.add(newFolder);
+    });
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "rename_item",
+      itemType,
+      oldPath,
+      newPath: cleanNewPath,
+    })
+  );
+}
+
+function deleteSelectedItem(itemType, targetPath) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const ok = confirm(
+    itemType === "folder"
+      ? `Delete folder "${targetPath}" and all files inside it?`
+      : `Delete file "${targetPath}"?`
+  );
+
+  if (!ok) return;
+
+  if (itemType === "folder") {
+    expandedFolders.delete(targetPath);
+
+    const prefix = targetPath + "/";
+    const toDelete = [];
+
+    expandedFolders.forEach((folder) => {
+      if (folder.startsWith(prefix)) {
+        toDelete.push(folder);
+      }
+    });
+
+    toDelete.forEach((folder) => expandedFolders.delete(folder));
+  }
+
+  selectedPath = "";
+  selectedType = "";
+
+  ws.send(
+    JSON.stringify({
+      type: "delete_item",
+      itemType,
+      path: targetPath,
+    })
+  );
+}
+
 require.config({
   paths: {
     vs: "https://unpkg.com/monaco-editor@0.45.0/min/vs",
@@ -275,13 +426,38 @@ document.getElementById("connect").onclick = () => {
       activeFilePath = message.activeFilePath || "";
 
       renderFileList();
+      const consoleInputElement = document.getElementById("consoleInput");
+      
+      if (consoleInputElement && message.consoleInput !== undefined) {
+        if (consoleInputElement.value !== message.consoleInput) {
+          isApplyingRemoteConsoleInput = true;
+          consoleInputElement.value = message.consoleInput;
+          isApplyingRemoteConsoleInput = false;
+        }
+      }
+      const stdinModeElement = document.getElementById("stdinMode");
+
+      if (stdinModeElement && message.stdinMode !== undefined) {
+        if (stdinModeElement.value !== message.stdinMode) {
+          isApplyingRemoteStdinMode = true;
+          stdinModeElement.value = message.stdinMode;
+          isApplyingRemoteStdinMode = false;
+        }
+      }
 
       const file = currentFiles.find((f) => f.path === activeFilePath);
 
-      if (file && editor) {
-        if (editor.getValue() !== file.content) {
+
+      if (editor) {
+        if (file) {
+          if (editor.getValue() !== file.content) {
+            isApplyingRemoteCode = true;
+            editor.setValue(file.content);
+            isApplyingRemoteCode = false;
+          }
+        } else {
           isApplyingRemoteCode = true;
-          editor.setValue(file.content);
+          editor.setValue("// No file selected");
           isApplyingRemoteCode = false;
         }
       }
@@ -338,14 +514,9 @@ document.getElementById("leave").onclick = () => {
 document.getElementById("runCode").onclick = () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-  const stdinMode = document.getElementById("stdinMode").value;
-  const consoleInput = document.getElementById("consoleInput").value;
-
   ws.send(
     JSON.stringify({
       type: "run_code",
-      stdinMode,
-      consoleInput,
     })
   );
 };
@@ -357,9 +528,11 @@ document.getElementById("requestControl").onclick = () => {
 document.getElementById("createFile").onclick = () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
+  const baseFolder = getSelectedFolderForCreation();
+
   const fileName = prompt(
-    selectedFolderPath
-      ? `New file in ${selectedFolderPath}/, e.g. A.cpp`
+    baseFolder
+      ? `New file in ${baseFolder}/, e.g. main.cpp`
       : "File name, e.g. A/main.cpp or notes.txt"
   );
 
@@ -367,8 +540,8 @@ document.getElementById("createFile").onclick = () => {
 
   let cleanPath = fileName.trim();
 
-  if (selectedFolderPath && !cleanPath.includes("/")) {
-    cleanPath = `${selectedFolderPath}/${cleanPath}`;
+  if (baseFolder && !cleanPath.includes("/")) {
+    cleanPath = `${baseFolder}/${cleanPath}`;
   }
 
   const parts = cleanPath.split("/");
@@ -377,6 +550,9 @@ document.getElementById("createFile").onclick = () => {
     expandedFolders.add(parts.slice(0, i).join("/"));
   }
 
+  selectedPath = cleanPath;
+  selectedType = "file";
+
   ws.send(
     JSON.stringify({
       type: "create_file",
@@ -384,12 +560,15 @@ document.getElementById("createFile").onclick = () => {
     })
   );
 };
+
 document.getElementById("createFolder").onclick = () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
+  const baseFolder = getSelectedFolderForCreation();
+
   const folderName = prompt(
-    selectedFolderPath
-      ? `New folder in ${selectedFolderPath}/, e.g. tests`
+    baseFolder
+      ? `New folder in ${baseFolder}/, e.g. tests`
       : "Folder name, e.g. A or A/tests"
   );
 
@@ -397,11 +576,13 @@ document.getElementById("createFolder").onclick = () => {
 
   let cleanPath = folderName.trim();
 
-  if (selectedFolderPath && !cleanPath.includes("/")) {
-    cleanPath = `${selectedFolderPath}/${cleanPath}`;
+  if (baseFolder && !cleanPath.includes("/")) {
+    cleanPath = `${baseFolder}/${cleanPath}`;
   }
 
-  selectedFolderPath = cleanPath;
+  selectedPath = cleanPath;
+  selectedType = "folder";
+
   expandedFolders.add(cleanPath);
 
   const parts = cleanPath.split("/");
@@ -416,3 +597,27 @@ document.getElementById("createFolder").onclick = () => {
     })
   );
 };
+
+document.getElementById("consoleInput").addEventListener("input", () => {
+  if (isApplyingRemoteConsoleInput) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  ws.send(
+    JSON.stringify({
+      type: "update_console_input",
+      consoleInput: document.getElementById("consoleInput").value,
+    })
+  );
+});
+
+document.getElementById("stdinMode").addEventListener("change", () => {
+  if (isApplyingRemoteStdinMode) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  ws.send(
+    JSON.stringify({
+      type: "update_stdin_mode",
+      stdinMode: document.getElementById("stdinMode").value,
+    })
+  );
+});

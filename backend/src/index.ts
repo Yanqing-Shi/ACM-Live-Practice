@@ -63,10 +63,28 @@ type CreateFolderMessage = {
   path: string;
 };
 
+type RenameItemMessage = {
+  type: "rename_item";
+  itemType: "file" | "folder";
+  oldPath: string;
+  newPath: string;
+};
+
+type DeleteItemMessage = {
+  type: "delete_item";
+  itemType: "file" | "folder";
+  path: string;
+};
+
 type RunCodeMessage = {
   type: "run_code";
   stdinMode?: "console" | "file";
   consoleInput?: string;
+};
+
+type UpdateConsoleInputMessage = {
+  type: "update_console_input";
+  consoleInput: string;
 };
 
 type ClientMessage =
@@ -79,7 +97,10 @@ type ClientMessage =
   | SwitchFileMessage
   | RunCodeMessage
   | CreateFileMessage
-  | CreateFolderMessage;
+  | CreateFolderMessage
+  | RenameItemMessage
+  | DeleteItemMessage
+  | UpdateConsoleInputMessage;
 
 type RoomStateMessage = {
   type: "room_state";
@@ -90,6 +111,7 @@ type RoomStateMessage = {
   files: FileItem[];
   folders: string[];
   activeFilePath: string;
+  consoleInput: string;
 };
 
 type ErrorMessage = {
@@ -121,6 +143,7 @@ type Room = {
   files: FileItem[];
   folders: string[];
   activeFilePath: string;
+  consoleInput: string;
 };
 
 const rooms: Record<string, Room> = {};
@@ -145,6 +168,7 @@ const message: RoomStateMessage = {
   files: room.files,
   folders: room.folders,
   activeFilePath: room.activeFilePath,
+  consoleInput: room.consoleInput,
 };
 
   const serialized = JSON.stringify(message);
@@ -314,6 +338,36 @@ function getParentFolders(targetPath: string): string[] {
 
   return folders;
 }
+function normalizeWorkspacePath(targetPath: string): string {
+  return targetPath.trim().replace(/\/+/g, "/").replace(/\/+$/, "");
+}
+
+function hasFile(room: Room, targetPath: string): boolean {
+  return room.files.some((f) => f.path === targetPath);
+}
+
+function hasFolder(room: Room, targetPath: string): boolean {
+  return room.folders.includes(targetPath);
+}
+
+function addParentFolders(room: Room, targetPath: string): void {
+  const parentFolders = getParentFolders(targetPath);
+
+  for (const folder of parentFolders) {
+    if (!room.folders.includes(folder)) {
+      room.folders.push(folder);
+    }
+  }
+}
+
+function chooseNextActiveFile(room: Room): void {
+  if (room.files.length > 0) {
+    room.activeFilePath = room.files[0].path;
+  } else {
+    room.activeFilePath = "";
+  }
+}
+
 function ensureDirForFile(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), {
     recursive: true,
@@ -501,17 +555,11 @@ wss.on("connection", (socket: WebSocket) => {
             files: [
               {
                 path: "main.cpp",
-                content: `#include <bits/stdc++.h>
-            using namespace std;
-
-            int main() {
-                cout << "Hello ICPC!" << endl;
-                return 0;
-            }
-            `,
+                content: ``
               },
             ],
             activeFilePath: "main.cpp",
+            consoleInput: "",
           };
           console.log(`[ROOM CREATED] ${roomId}`);
         }
@@ -644,7 +692,7 @@ wss.on("connection", (socket: WebSocket) => {
           let stdin = "";
 
           if (stdinMode === "console") {
-            stdin = data.consoleInput || "";
+            stdin = room.consoleInput || "";
           } else {
             const inputPath =
               activeDir === "."
@@ -860,6 +908,25 @@ wss.on("connection", (socket: WebSocket) => {
         broadcastRoomState(context.roomId);
         return;
       }
+      if (data.type === "update_console_input") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can edit console input",
+          });
+          return;
+        }
+
+        room.consoleInput = data.consoleInput;
+
+        broadcastRoomState(roomId);
+        return;
+      }
       if (data.type === "switch_file") {
         const context = getClientRoom(socket);
         if (!context) return;
@@ -982,6 +1049,183 @@ wss.on("connection", (socket: WebSocket) => {
 
         broadcastRoomState(roomId);
         return;
+      }
+      if (data.type === "rename_item") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can rename files or folders",
+          });
+          return;
+        }
+
+        const oldPath = normalizeWorkspacePath(data.oldPath);
+        const newPath = normalizeWorkspacePath(data.newPath);
+
+        if (!isValidWorkspacePath(oldPath) || !isValidWorkspacePath(newPath)) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Invalid path",
+          });
+          return;
+        }
+
+        if (oldPath === newPath) {
+          return;
+        }
+
+        if (hasFile(room, newPath) || hasFolder(room, newPath)) {
+          sendMessage(socket, {
+            type: "error",
+            message: `Path "${newPath}" already exists`,
+          });
+          return;
+        }
+
+        if (data.itemType === "file") {
+          const file = room.files.find((f) => f.path === oldPath);
+
+          if (!file) {
+            sendMessage(socket, {
+              type: "error",
+              message: `File "${oldPath}" not found`,
+            });
+            return;
+          }
+
+          file.path = newPath;
+          addParentFolders(room, newPath);
+
+          if (room.activeFilePath === oldPath) {
+            room.activeFilePath = newPath;
+          }
+
+          broadcastRoomState(roomId);
+          return;
+        }
+
+        if (data.itemType === "folder") {
+          if (!room.folders.includes(oldPath)) {
+            sendMessage(socket, {
+              type: "error",
+              message: `Folder "${oldPath}" not found`,
+            });
+            return;
+          }
+
+          const oldPrefix = oldPath + "/";
+
+          room.folders = room.folders.map((folder) => {
+            if (folder === oldPath) return newPath;
+
+            if (folder.startsWith(oldPrefix)) {
+              return newPath + folder.slice(oldPath.length);
+            }
+
+            return folder;
+          });
+
+          room.files = room.files.map((file) => {
+            if (file.path.startsWith(oldPrefix)) {
+              return {
+                ...file,
+                path: newPath + file.path.slice(oldPath.length),
+              };
+            }
+
+            return file;
+          });
+
+          if (room.activeFilePath.startsWith(oldPrefix)) {
+            room.activeFilePath =
+              newPath + room.activeFilePath.slice(oldPath.length);
+          }
+
+          addParentFolders(room, newPath);
+
+          room.folders = Array.from(new Set(room.folders));
+
+          broadcastRoomState(roomId);
+          return;
+        }
+      }
+
+      if (data.type === "delete_item") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can delete files or folders",
+          });
+          return;
+        }
+
+        const targetPath = normalizeWorkspacePath(data.path);
+
+        if (!isValidWorkspacePath(targetPath)) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Invalid path",
+          });
+          return;
+        }
+
+        if (data.itemType === "file") {
+          const beforeCount = room.files.length;
+
+          room.files = room.files.filter((f) => f.path !== targetPath);
+
+          if (room.files.length === beforeCount) {
+            sendMessage(socket, {
+              type: "error",
+              message: `File "${targetPath}" not found`,
+            });
+            return;
+          }
+
+          if (room.activeFilePath === targetPath) {
+            chooseNextActiveFile(room);
+          }
+
+          broadcastRoomState(roomId);
+          return;
+        }
+
+        if (data.itemType === "folder") {
+          if (!room.folders.includes(targetPath)) {
+            sendMessage(socket, {
+              type: "error",
+              message: `Folder "${targetPath}" not found`,
+            });
+            return;
+          }
+
+          const prefix = targetPath + "/";
+
+          room.folders = room.folders.filter(
+            (folder) => folder !== targetPath && !folder.startsWith(prefix)
+          );
+
+          room.files = room.files.filter(
+            (file) => !file.path.startsWith(prefix)
+          );
+
+          if (room.activeFilePath.startsWith(prefix)) {
+            chooseNextActiveFile(room);
+          }
+
+          broadcastRoomState(roomId);
+          return;
+        }
       }
 
       sendMessage(socket, {

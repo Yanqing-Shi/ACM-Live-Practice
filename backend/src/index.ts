@@ -87,6 +87,11 @@ type UpdateConsoleInputMessage = {
   consoleInput: string;
 };
 
+type UpdateStdinModeMessage = {
+  type: "update_stdin_mode";
+  stdinMode: "console" | "file";
+};
+
 type ClientMessage =
   | JoinRoomMessage
   | LeaveRoomMessage
@@ -100,7 +105,8 @@ type ClientMessage =
   | CreateFolderMessage
   | RenameItemMessage
   | DeleteItemMessage
-  | UpdateConsoleInputMessage;
+  | UpdateConsoleInputMessage
+  | UpdateStdinModeMessage;
 
 type RoomStateMessage = {
   type: "room_state";
@@ -112,6 +118,7 @@ type RoomStateMessage = {
   folders: string[];
   activeFilePath: string;
   consoleInput: string;
+  stdinMode: "console" | "file";
 };
 
 type ErrorMessage = {
@@ -144,6 +151,7 @@ type Room = {
   folders: string[];
   activeFilePath: string;
   consoleInput: string;
+  stdinMode: "console" | "file";
 };
 
 const rooms: Record<string, Room> = {};
@@ -169,6 +177,7 @@ const message: RoomStateMessage = {
   folders: room.folders,
   activeFilePath: room.activeFilePath,
   consoleInput: room.consoleInput,
+  stdinMode: room.stdinMode,
 };
 
   const serialized = JSON.stringify(message);
@@ -560,6 +569,7 @@ wss.on("connection", (socket: WebSocket) => {
             ],
             activeFilePath: "main.cpp",
             consoleInput: "",
+            stdinMode: "console",
           };
           console.log(`[ROOM CREATED] ${roomId}`);
         }
@@ -638,7 +648,7 @@ wss.on("connection", (socket: WebSocket) => {
             ? runDir
             : workspacePathToDiskPath(runDir, activeDir);
 
-        const stdinMode = data.stdinMode || "console";
+        const stdinMode = room.stdinMode || "console";
 
         try {
           writeWorkspaceToDisk(runDir, room.files);
@@ -923,6 +933,25 @@ wss.on("connection", (socket: WebSocket) => {
         }
 
         room.consoleInput = data.consoleInput;
+
+        broadcastRoomState(roomId);
+        return;
+      }
+      if (data.type === "update_stdin_mode") {
+        const context = getClientRoom(socket);
+        if (!context) return;
+
+        const { room, roomId, userName } = context;
+
+        if (room.currentController !== userName) {
+          sendMessage(socket, {
+            type: "error",
+            message: "Only controller can change input mode",
+          });
+          return;
+        }
+
+        room.stdinMode = data.stdinMode;
 
         broadcastRoomState(roomId);
         return;

@@ -2,157 +2,28 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { spawn } from "child_process";
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { runCodeInRoom } from "./runner";
+import type {
+  ClientMessage,
+  Room,
+  RoomStateMessage,
+  ServerMessage,
+} from "./types";
+import {
+  addParentFolders,
+  chooseNextActiveFile,
+  getParentFolders,
+  hasFile,
+  hasFolder,
+  isValidWorkspacePath,
+  normalizeWorkspacePath,
+} from "./workspace";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = 3001;
-
-type JoinRoomMessage = {
-  type: "join_room";
-  roomId: string;
-  userName: string;
-};
-
-type LeaveRoomMessage = {
-  type: "leave_room";
-};
-
-type RequestControlMessage = {
-  type: "request_control";
-};
-
-type ApproveControlMessage = {
-  type: "approve_control";
-  targetUserName: string;
-};
-
-type RejectControlMessage = {
-  type: "reject_control";
-  targetUserName: string;
-};
-
-
-type FileItem = {
-  path: string;
-  content: string;
-};
-
-type UpdateFileMessage = {
-  type: "update_file";
-  content: string;
-};
-
-type SwitchFileMessage = {
-  type: "switch_file";
-  path: string;
-};
-
-type CreateFileMessage = {
-  type: "create_file";
-  path: string;
-};
-
-type CreateFolderMessage = {
-  type: "create_folder";
-  path: string;
-};
-
-type RenameItemMessage = {
-  type: "rename_item";
-  itemType: "file" | "folder";
-  oldPath: string;
-  newPath: string;
-};
-
-type DeleteItemMessage = {
-  type: "delete_item";
-  itemType: "file" | "folder";
-  path: string;
-};
-
-type RunCodeMessage = {
-  type: "run_code";
-  stdinMode?: "console" | "file";
-  consoleInput?: string;
-};
-
-type UpdateConsoleInputMessage = {
-  type: "update_console_input";
-  consoleInput: string;
-};
-
-type UpdateStdinModeMessage = {
-  type: "update_stdin_mode";
-  stdinMode: "console" | "file";
-};
-
-type ClientMessage =
-  | JoinRoomMessage
-  | LeaveRoomMessage
-  | RequestControlMessage
-  | ApproveControlMessage
-  | RejectControlMessage
-  | UpdateFileMessage
-  | SwitchFileMessage
-  | RunCodeMessage
-  | CreateFileMessage
-  | CreateFolderMessage
-  | RenameItemMessage
-  | DeleteItemMessage
-  | UpdateConsoleInputMessage
-  | UpdateStdinModeMessage;
-
-type RoomStateMessage = {
-  type: "room_state";
-  roomId: string;
-  members: string[];
-  currentController: string | null;
-  controlRequests: string[];
-  files: FileItem[];
-  folders: string[];
-  activeFilePath: string;
-  consoleInput: string;
-  stdinMode: "console" | "file";
-};
-
-type ErrorMessage = {
-  type: "error";
-  message: string;
-};
-
-type RunResultMessage = {
-  type: "run_result";
-  output: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  timedOut: boolean;
-  runner: string;
-};
-
-type ServerMessage = RoomStateMessage | ErrorMessage | RunResultMessage;
-
-type ClientInfo = {
-  socket: WebSocket;
-  userName: string;
-};
-
-type Room = {
-  clients: ClientInfo[];
-  currentController: string | null;
-  controlRequests: string[];
-  files: FileItem[];
-  folders: string[];
-  activeFilePath: string;
-  consoleInput: string;
-  stdinMode: "console" | "file";
-};
 
 const rooms: Record<string, Room> = {};
 const socketMeta = new Map<WebSocket, { roomId: string; userName: string }>();
@@ -167,18 +38,18 @@ function broadcastRoomState(roomId: string): void {
   const room = rooms[roomId];
   if (!room) return;
 
-const message: RoomStateMessage = {
-  type: "room_state",
-  roomId,
-  members: room.clients.map((c) => c.userName),
-  currentController: room.currentController,
-  controlRequests: room.controlRequests,
-  files: room.files,
-  folders: room.folders,
-  activeFilePath: room.activeFilePath,
-  consoleInput: room.consoleInput,
-  stdinMode: room.stdinMode,
-};
+  const message: RoomStateMessage = {
+    type: "room_state",
+    roomId,
+    members: room.clients.map((c) => c.userName),
+    currentController: room.currentController,
+    controlRequests: room.controlRequests,
+    files: room.files,
+    folders: room.folders,
+    activeFilePath: room.activeFilePath,
+    consoleInput: room.consoleInput,
+    stdinMode: room.stdinMode,
+  };
 
   const serialized = JSON.stringify(message);
 
@@ -202,85 +73,6 @@ function broadcastToRoom(roomId: string, message: ServerMessage): void {
     }
   }
 }
-
-function runCommand(
-  command: string,
-  args: string[],
-  options: {
-    cwd: string;
-    input?: string;
-    timeoutMs: number;
-  }
-): Promise<{
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  timedOut: boolean;
-}> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      shell: false,
-      windowsHide: true,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let finished = false;
-    let timedOut = false;
-
-    const timer = setTimeout(() => {
-      if (finished) return;
-
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      if (finished) return;
-
-      finished = true;
-      clearTimeout(timer);
-
-      resolve({
-        stdout,
-        stderr: stderr + error.message,
-        exitCode: null,
-        timedOut,
-      });
-    });
-
-    child.on("close", (code) => {
-      if (finished) return;
-
-      finished = true;
-      clearTimeout(timer);
-
-      resolve({
-        stdout,
-        stderr,
-        exitCode: code,
-        timedOut,
-      });
-    });
-
-    if (options.input) {
-      child.stdin.write(options.input);
-    }
-
-    child.stdin.end();
-  });
-}
-
-
 
 function removeClientFromRoom(socket: WebSocket): void {
   const meta = socketMeta.get(socket);
@@ -328,156 +120,6 @@ function getClientRoom(socket: WebSocket) {
     userName: meta.userName,
   };
 }
-
-function isValidWorkspacePath(targetPath: string): boolean {
-  if (!targetPath) return false;
-  if (targetPath.includes("..")) return false;
-  if (targetPath.startsWith("/") || targetPath.startsWith("\\")) return false;
-  if (targetPath.includes("\\")) return false;
-  return true;
-}
-
-function getParentFolders(targetPath: string): string[] {
-  const parts = targetPath.split("/");
-  const folders: string[] = [];
-
-  for (let i = 1; i < parts.length; i++) {
-    folders.push(parts.slice(0, i).join("/"));
-  }
-
-  return folders;
-}
-function normalizeWorkspacePath(targetPath: string): string {
-  return targetPath.trim().replace(/\/+/g, "/").replace(/\/+$/, "");
-}
-
-function hasFile(room: Room, targetPath: string): boolean {
-  return room.files.some((f) => f.path === targetPath);
-}
-
-function hasFolder(room: Room, targetPath: string): boolean {
-  return room.folders.includes(targetPath);
-}
-
-function addParentFolders(room: Room, targetPath: string): void {
-  const parentFolders = getParentFolders(targetPath);
-
-  for (const folder of parentFolders) {
-    if (!room.folders.includes(folder)) {
-      room.folders.push(folder);
-    }
-  }
-}
-
-function chooseNextActiveFile(room: Room): void {
-  if (room.files.length > 0) {
-    room.activeFilePath = room.files[0].path;
-  } else {
-    room.activeFilePath = "";
-  }
-}
-
-function ensureDirForFile(filePath: string): void {
-  fs.mkdirSync(path.dirname(filePath), {
-    recursive: true,
-  });
-}
-
-function workspacePathToDiskPath(runDir: string, workspacePath: string): string {
-  const parts = workspacePath.split("/").filter(Boolean);
-  return path.join(runDir, ...parts);
-}
-
-function writeWorkspaceToDisk(runDir: string, files: FileItem[]): void {
-  for (const file of files) {
-    const diskPath = workspacePathToDiskPath(runDir, file.path);
-    ensureDirForFile(diskPath);
-    fs.writeFileSync(diskPath, file.content, "utf8");
-  }
-}
-
-function shouldSyncBackFile(filePath: string, size: number): boolean {
-  if (size > 1024 * 1024) return false;
-
-  const normalized = filePath.replace(/\\/g, "/");
-  const baseName = path.basename(normalized).toLowerCase();
-
-  if (baseName === "main.exe") return false;
-  if (baseName === "main") return false;
-
-  const allowedExtensions = [
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".c",
-    ".py",
-    ".java",
-    ".in",
-    ".out",
-    ".ans",
-    ".txt",
-    ".log",
-    ".md",
-    ".csv",
-  ];
-
-  return allowedExtensions.some((ext) => normalized.endsWith(ext));
-}
-
-function scanWorkspaceFiles(runDir: string): FileItem[] {
-  const result: FileItem[] = [];
-
-  function walk(currentDir: string): void {
-    const entries = fs.readdirSync(currentDir, {
-      withFileTypes: true,
-    });
-
-    for (const entry of entries) {
-      const fullPath = path.join(currentDir, entry.name);
-
-      if (entry.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-
-      const stat = fs.statSync(fullPath);
-      const relativePath = path.relative(runDir, fullPath).replace(/\\/g, "/");
-
-      if (!shouldSyncBackFile(relativePath, stat.size)) continue;
-
-      result.push({
-        path: relativePath,
-        content: fs.readFileSync(fullPath, "utf8"),
-      });
-    }
-  }
-
-  walk(runDir);
-  return result;
-}
-
-function mergeSyncedFilesIntoRoom(room: Room, syncedFiles: FileItem[]): void {
-  for (const syncedFile of syncedFiles) {
-    const existing = room.files.find((f) => f.path === syncedFile.path);
-
-    if (existing) {
-      existing.content = syncedFile.content;
-    } else {
-      room.files.push(syncedFile);
-    }
-
-    const parentFolders = getParentFolders(syncedFile.path);
-
-    for (const folder of parentFolders) {
-      if (!room.folders.includes(folder)) {
-        room.folders.push(folder);
-      }
-    }
-  }
-}
-
 
 function removeUserFromOtherRooms(userName: string, targetRoomId: string): void {
   for (const [otherRoomId, otherRoom] of Object.entries(rooms)) {
@@ -620,145 +262,25 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const activeFile = room.files.find((f) => f.path === room.activeFilePath);
-
-        if (!activeFile) {
-          sendMessage(socket, {
-            type: "error",
-            message: "Active file not found",
-          });
-          return;
-        }
-
-        if (!activeFile.path.endsWith(".cpp")) {
-          sendMessage(socket, {
-            type: "error",
-            message: "Only .cpp files can be run for now",
-          });
-          return;
-        }
-
-        const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "icpc-run-"));
-        const exeName = process.platform === "win32" ? "main.exe" : "main";
-        const exePath = path.join(runDir, exeName);
-
-        const activeDir = path.posix.dirname(activeFile.path);
-        const activeDiskDir =
-          activeDir === "."
-            ? runDir
-            : workspacePathToDiskPath(runDir, activeDir);
-
-        const stdinMode = room.stdinMode || "console";
-
-        try {
-          writeWorkspaceToDisk(runDir, room.files);
-
-          fs.mkdirSync(activeDiskDir, {
-            recursive: true,
-          });
-
-          broadcastToRoom(roomId, {
-            type: "run_result",
-            output: `[Running by ${userName}...]\n`,
-            stdout: "",
-            stderr: "",
-            exitCode: null,
-            timedOut: false,
-            runner: userName,
-          });
-
-          const compileResult = await runCommand(
-            "g++",
-            [
-              workspacePathToDiskPath(runDir, activeFile.path),
-              "-std=c++17",
-              "-O2",
-              "-Wall",
-              "-o",
-              exePath,
-            ],
-            {
-              cwd: runDir,
-              timeoutMs: 5000,
-            }
+        if (
+          data.activeFilePath === room.activeFilePath &&
+          typeof data.activeFileContent === "string"
+        ) {
+          const activeFile = room.files.find(
+            (f) => f.path === room.activeFilePath
           );
 
-          if (compileResult.timedOut || compileResult.exitCode !== 0) {
-            broadcastToRoom(roomId, {
-              type: "run_result",
-              output:
-                `[Compile failed by ${userName}]\n\n` +
-                (compileResult.stderr || compileResult.stdout || "Compilation failed."),
-              stdout: compileResult.stdout,
-              stderr: compileResult.stderr,
-              exitCode: compileResult.exitCode,
-              timedOut: compileResult.timedOut,
-              runner: userName,
-            });
-
-            return;
+          if (activeFile) {
+            activeFile.content = data.activeFileContent;
           }
+        }
 
-          let stdin = "";
-
-          if (stdinMode === "console") {
-            stdin = room.consoleInput || "";
-          } else {
-            const inputPath =
-              activeDir === "."
-                ? "input.in"
-                : `${activeDir}/input.in`;
-
-            const inputFile = room.files.find((f) => f.path === inputPath);
-            stdin = inputFile?.content || "";
-          }
-
-          const runResult = await runCommand(exePath, [], {
-            cwd: activeDiskDir,
-            input: stdin,
-            timeoutMs: 3000,
+        try {
+          const runResult = await runCodeInRoom(room, userName, (message) => {
+            broadcastToRoom(roomId, message);
           });
 
-          const syncedFiles = scanWorkspaceFiles(runDir);
-          mergeSyncedFilesIntoRoom(room, syncedFiles);
-
-          let output = "";
-
-          if (runResult.timedOut) {
-            output += `[Runtime error by ${userName}]\nProgram timed out after 3 seconds.\n\n`;
-          } else {
-            output += `[Finished by ${userName}]\nExit code: ${runResult.exitCode}\n\n`;
-          }
-
-          if (stdinMode === "console") {
-            output += `[Input mode: Console]\n\n`;
-          } else {
-            output += `[Input mode: File input.in]\n\n`;
-          }
-
-          if (runResult.stdout) {
-            output += `stdout:\n${runResult.stdout}\n`;
-          }
-
-          if (runResult.stderr) {
-            output += `stderr:\n${runResult.stderr}\n`;
-          }
-
-          if (!runResult.stdout && !runResult.stderr) {
-            output += "(No console output)\n";
-          }
-
-          output += "\n[Workspace files synced]\n";
-
-          broadcastToRoom(roomId, {
-            type: "run_result",
-            output,
-            stdout: runResult.stdout,
-            stderr: runResult.stderr,
-            exitCode: runResult.exitCode,
-            timedOut: runResult.timedOut,
-            runner: userName,
-          });
+          broadcastToRoom(roomId, runResult);
 
           broadcastRoomState(roomId);
         } catch (error) {
@@ -772,11 +294,6 @@ wss.on("connection", (socket: WebSocket) => {
             exitCode: null,
             timedOut: false,
             runner: userName,
-          });
-        } finally {
-          fs.rmSync(runDir, {
-            recursive: true,
-            force: true,
           });
         }
 

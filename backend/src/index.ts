@@ -2,6 +2,20 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
+import {
+  addClientToRoom,
+  approveControl,
+  createDefaultRoom,
+  createFile,
+  createFolder,
+  deleteItem,
+  rejectControl,
+  removeClientFromRoomState,
+  renameItem,
+  requestControl,
+  switchActiveFile,
+  updateActiveFileContent,
+} from "./roomActions";
 import { runCodeInRoom } from "./runner";
 import type {
   ClientMessage,
@@ -9,21 +23,12 @@ import type {
   RoomStateMessage,
   ServerMessage,
 } from "./types";
-import {
-  addParentFolders,
-  chooseNextActiveFile,
-  getParentFolders,
-  hasFile,
-  hasFolder,
-  isValidWorkspacePath,
-  normalizeWorkspacePath,
-} from "./workspace";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3001);
 
 const rooms: Record<string, Room> = {};
 const socketMeta = new Map<WebSocket, { roomId: string; userName: string }>();
@@ -82,21 +87,24 @@ function removeClientFromRoom(socket: WebSocket): void {
   const room = rooms[roomId];
 
   if (room) {
-    room.clients = room.clients.filter((client) => client.socket !== socket);
-    room.controlRequests = room.controlRequests.filter(
-      (name) => name !== userName
-    );
+    const client = room.clients.find((existing) => existing.socket === socket);
+
+    if (!client) {
+      socketMeta.delete(socket);
+      return;
+    }
+
+    const result = removeClientFromRoomState(room, client);
 
     console.log(`[LEAVE] ${userName} left room ${roomId}`);
 
-    if (room.clients.length === 0) {
+    if (result.roomEmpty) {
       delete rooms[roomId];
       console.log(`[ROOM REMOVED] ${roomId}`);
     } else {
-      if (room.currentController === userName) {
-        room.currentController = room.clients[0].userName;
+      if (result.controllerChanged) {
         console.log(
-          `[CONTROL TRANSFER] ${room.currentController} is now controller of room ${roomId}`
+          `[CONTROL TRANSFER] ${result.newController} is now controller of room ${roomId}`
         );
       }
 
@@ -198,31 +206,14 @@ wss.on("connection", (socket: WebSocket) => {
         }
         removeUserFromOtherRooms(userName, roomId);
         if (!rooms[roomId]) {
-          rooms[roomId] = {
-            clients: [],
-            currentController: null,
-            controlRequests: [],
-            folders: [],
-            files: [
-              {
-                path: "main.cpp",
-                content: ``
-              },
-            ],
-            activeFilePath: "main.cpp",
-            consoleInput: "",
-            stdinMode: "console",
-          };
+          rooms[roomId] = createDefaultRoom();
           console.log(`[ROOM CREATED] ${roomId}`);
         }
 
         const room = rooms[roomId];
-        
-        const alreadyInRoom = room.clients.some(
-          (client) => client.userName === userName
-        );
+        const addResult = addClientToRoom(room, { socket, userName });
 
-        if (alreadyInRoom) {
+        if (!addResult.ok) {
           sendMessage(socket, {
             type: "error",
             message: `User name "${userName}" already exists in room ${roomId}`,
@@ -230,11 +221,9 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        room.clients.push({ socket, userName });
         socketMeta.set(socket, { roomId, userName });
 
-        if (room.currentController === null) {
-          room.currentController = userName;
+        if (room.currentController === userName) {
           console.log(`[CONTROL ASSIGNED] ${userName} controls room ${roomId}`);
         }
 
@@ -266,13 +255,7 @@ wss.on("connection", (socket: WebSocket) => {
           data.activeFilePath === room.activeFilePath &&
           typeof data.activeFileContent === "string"
         ) {
-          const activeFile = room.files.find(
-            (f) => f.path === room.activeFilePath
-          );
-
-          if (activeFile) {
-            activeFile.content = data.activeFileContent;
-          }
+          updateActiveFileContent(room, data.activeFileContent);
         }
 
         try {
@@ -312,19 +295,17 @@ wss.on("connection", (socket: WebSocket) => {
 
         const { room, roomId, userName } = context;
 
-        if (room.currentController === userName) {
+        const result = requestControl(room, userName);
+
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "You are already the controller",
+            message: result.error || "Could not request control",
           });
           return;
         }
 
-        if (!room.controlRequests.includes(userName)) {
-          room.controlRequests.push(userName);
-          console.log(`[REQUEST CONTROL] ${userName} requested room ${roomId}`);
-        }
-
+        console.log(`[REQUEST CONTROL] ${userName} requested room ${roomId}`);
         broadcastRoomState(roomId);
         return;
       }
@@ -343,38 +324,15 @@ wss.on("connection", (socket: WebSocket) => {
         const { room, roomId, userName } = context;
         const { targetUserName } = data;
 
-        if (room.currentController !== userName) {
+        const result = approveControl(room, userName, targetUserName);
+
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "Only the current controller can approve control requests",
+            message: result.error || "Could not approve control request",
           });
           return;
         }
-
-        const targetExists = room.clients.some(
-          (client) => client.userName === targetUserName
-        );
-
-        if (!targetExists) {
-          sendMessage(socket, {
-            type: "error",
-            message: `Target user "${targetUserName}" is not in this room`,
-          });
-          return;
-        }
-
-        if (!room.controlRequests.includes(targetUserName)) {
-          sendMessage(socket, {
-            type: "error",
-            message: `User "${targetUserName}" has not requested control`,
-          });
-          return;
-        }
-
-        room.currentController = targetUserName;
-        room.controlRequests = room.controlRequests.filter(
-          (name) => name !== targetUserName
-        );
 
         console.log(
           `[CONTROL APPROVED] ${targetUserName} now controls room ${roomId}`
@@ -398,17 +356,15 @@ wss.on("connection", (socket: WebSocket) => {
         const { room, roomId, userName } = context;
         const { targetUserName } = data;
 
-        if (room.currentController !== userName) {
+        const result = rejectControl(room, userName, targetUserName);
+
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "Only the current controller can reject control requests",
+            message: result.error || "Could not reject control request",
           });
           return;
         }
-
-        room.controlRequests = room.controlRequests.filter(
-          (name) => name !== targetUserName
-        );
 
         console.log(`[CONTROL REJECTED] ${targetUserName} rejected`);
 
@@ -424,13 +380,7 @@ wss.on("connection", (socket: WebSocket) => {
 
         if (room.currentController !== userName) return;
 
-        const file = room.files.find(
-          (f) => f.path === room.activeFilePath
-        );
-
-        if (file) {
-          file.content = data.content;
-        }
+        updateActiveFileContent(room, data.content);
 
         broadcastRoomState(context.roomId);
         return;
@@ -478,11 +428,14 @@ wss.on("connection", (socket: WebSocket) => {
         if (!context) return;
 
         const { room, roomId } = context;
+        const result = switchActiveFile(room, data.path);
 
-        const exists = room.files.some((f) => f.path === data.path);
-
-        if (exists) {
-          room.activeFilePath = data.path;
+        if (!result.ok) {
+          sendMessage(socket, {
+            type: "error",
+            message: result.error || "Could not switch file",
+          });
+          return;
         }
 
         broadcastRoomState(roomId);
@@ -502,36 +455,14 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const folderPath = data.path.trim().replace(/\/+$/, "");
+        const result = createFolder(room, data.path);
 
-        if (!isValidWorkspacePath(folderPath)) {
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "Invalid folder path",
+            message: result.error || "Could not create folder",
           });
           return;
-        }
-
-        const fileWithSamePath = room.files.some((f) => f.path === folderPath);
-
-        if (fileWithSamePath) {
-          sendMessage(socket, {
-            type: "error",
-            message: `A file named "${folderPath}" already exists`,
-          });
-          return;
-        }
-
-        const parentFolders = getParentFolders(folderPath);
-
-        for (const parent of parentFolders) {
-          if (!room.folders.includes(parent)) {
-            room.folders.push(parent);
-          }
-        }
-
-        if (!room.folders.includes(folderPath)) {
-          room.folders.push(folderPath);
         }
 
         broadcastRoomState(roomId);
@@ -552,46 +483,15 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const newPath = data.path.trim();
+        const result = createFile(room, data.path);
 
-        if (!newPath) {
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "File name is required",
+            message: result.error || "Could not create file",
           });
           return;
         }
-
-        if (newPath.includes("..") || newPath.startsWith("/") || newPath.startsWith("\\")) {
-          sendMessage(socket, {
-            type: "error",
-            message: "Invalid file path",
-          });
-          return;
-        }
-
-        const alreadyExists = room.files.some((f) => f.path === newPath);
-
-        if (alreadyExists) {
-          sendMessage(socket, {
-            type: "error",
-            message: `File "${newPath}" already exists`,
-          });
-          return;
-        }
-        const parentFolders = getParentFolders(newPath);
-
-        for (const folder of parentFolders) {
-          if (!room.folders.includes(folder)) {
-            room.folders.push(folder);
-          }
-        }
-        room.files.push({
-          path: newPath,
-          content: "",
-        });
-
-        room.activeFilePath = newPath;
 
         broadcastRoomState(roomId);
         return;
@@ -610,95 +510,23 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const oldPath = normalizeWorkspacePath(data.oldPath);
-        const newPath = normalizeWorkspacePath(data.newPath);
+        const result = renameItem(
+          room,
+          data.itemType,
+          data.oldPath,
+          data.newPath
+        );
 
-        if (!isValidWorkspacePath(oldPath) || !isValidWorkspacePath(newPath)) {
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "Invalid path",
+            message: result.error || "Could not rename item",
           });
           return;
         }
 
-        if (oldPath === newPath) {
-          return;
-        }
-
-        if (hasFile(room, newPath) || hasFolder(room, newPath)) {
-          sendMessage(socket, {
-            type: "error",
-            message: `Path "${newPath}" already exists`,
-          });
-          return;
-        }
-
-        if (data.itemType === "file") {
-          const file = room.files.find((f) => f.path === oldPath);
-
-          if (!file) {
-            sendMessage(socket, {
-              type: "error",
-              message: `File "${oldPath}" not found`,
-            });
-            return;
-          }
-
-          file.path = newPath;
-          addParentFolders(room, newPath);
-
-          if (room.activeFilePath === oldPath) {
-            room.activeFilePath = newPath;
-          }
-
-          broadcastRoomState(roomId);
-          return;
-        }
-
-        if (data.itemType === "folder") {
-          if (!room.folders.includes(oldPath)) {
-            sendMessage(socket, {
-              type: "error",
-              message: `Folder "${oldPath}" not found`,
-            });
-            return;
-          }
-
-          const oldPrefix = oldPath + "/";
-
-          room.folders = room.folders.map((folder) => {
-            if (folder === oldPath) return newPath;
-
-            if (folder.startsWith(oldPrefix)) {
-              return newPath + folder.slice(oldPath.length);
-            }
-
-            return folder;
-          });
-
-          room.files = room.files.map((file) => {
-            if (file.path.startsWith(oldPrefix)) {
-              return {
-                ...file,
-                path: newPath + file.path.slice(oldPath.length),
-              };
-            }
-
-            return file;
-          });
-
-          if (room.activeFilePath.startsWith(oldPrefix)) {
-            room.activeFilePath =
-              newPath + room.activeFilePath.slice(oldPath.length);
-          }
-
-          addParentFolders(room, newPath);
-
-          room.folders = Array.from(new Set(room.folders));
-
-          broadcastRoomState(roomId);
-          return;
-        }
+        broadcastRoomState(roomId);
+        return;
       }
 
       if (data.type === "delete_item") {
@@ -715,63 +543,18 @@ wss.on("connection", (socket: WebSocket) => {
           return;
         }
 
-        const targetPath = normalizeWorkspacePath(data.path);
+        const result = deleteItem(room, data.itemType, data.path);
 
-        if (!isValidWorkspacePath(targetPath)) {
+        if (!result.ok) {
           sendMessage(socket, {
             type: "error",
-            message: "Invalid path",
+            message: result.error || "Could not delete item",
           });
           return;
         }
 
-        if (data.itemType === "file") {
-          const beforeCount = room.files.length;
-
-          room.files = room.files.filter((f) => f.path !== targetPath);
-
-          if (room.files.length === beforeCount) {
-            sendMessage(socket, {
-              type: "error",
-              message: `File "${targetPath}" not found`,
-            });
-            return;
-          }
-
-          if (room.activeFilePath === targetPath) {
-            chooseNextActiveFile(room);
-          }
-
-          broadcastRoomState(roomId);
-          return;
-        }
-
-        if (data.itemType === "folder") {
-          if (!room.folders.includes(targetPath)) {
-            sendMessage(socket, {
-              type: "error",
-              message: `Folder "${targetPath}" not found`,
-            });
-            return;
-          }
-
-          const prefix = targetPath + "/";
-
-          room.folders = room.folders.filter(
-            (folder) => folder !== targetPath && !folder.startsWith(prefix)
-          );
-
-          room.files = room.files.filter(
-            (file) => !file.path.startsWith(prefix)
-          );
-
-          if (room.activeFilePath.startsWith(prefix)) {
-            chooseNextActiveFile(room);
-          }
-
-          broadcastRoomState(roomId);
-          return;
-        }
+        broadcastRoomState(roomId);
+        return;
       }
 
       sendMessage(socket, {
@@ -797,5 +580,5 @@ wss.on("connection", (socket: WebSocket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server is running at http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });

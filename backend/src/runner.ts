@@ -116,17 +116,6 @@ function getPythonCommand(): string {
   return process.platform === "win32" ? "python" : "python3";
 }
 
-function shouldUseShellForCommand(command: string): boolean {
-  if (process.platform !== "win32") return false;
-
-  const lowerCommand = command.toLowerCase();
-  return lowerCommand.endsWith(".bat") || lowerCommand.endsWith(".cmd");
-}
-
-function getKotlinCommand(): string {
-  return process.platform === "win32" ? "kotlinc.bat" : "kotlinc";
-}
-
 function getJavaClassToRun(
   activeDiskDir: string,
   fallbackClassName: string
@@ -196,8 +185,7 @@ export async function runCodeInRoom(
 
     let compileCommand: string | null = null;
     let compileArgs: string[] = [];
-    let compileShell = false;
-    let compileTimeoutMs = 8000;
+    let compileTimeoutMs = 12000;
 
     const activeDiskPath = workspacePathToDiskPath(runDir, activeFile.path);
     const className = getBaseNameWithoutExt(activeFile.path);
@@ -222,20 +210,32 @@ export async function runCodeInRoom(
     if (language === "java") {
       compileCommand = "javac";
       compileArgs = [activeDiskPath];
-      compileTimeoutMs = 12000;
+      compileTimeoutMs = 15000;
     }
 
     if (language === "kotlin") {
-      compileCommand = getKotlinCommand();
-      compileArgs = [activeDiskPath, "-include-runtime", "-d", jarPath];
-      compileShell = shouldUseShellForCommand(compileCommand);
-      compileTimeoutMs = 20000;
+      if (process.platform === "win32") {
+        compileCommand = "cmd.exe";
+        compileArgs = [
+          "/d",
+          "/s",
+          "/c",
+          "kotlinc.bat",
+          activeDiskPath,
+          "-include-runtime",
+          "-d",
+          jarPath,
+        ];
+      } else {
+        compileCommand = "kotlinc";
+        compileArgs = [activeDiskPath, "-include-runtime", "-d", jarPath];
+      }
+      compileTimeoutMs = 25000;
     }
 
     if (compileCommand) {
       const compileResult = await runCommand(compileCommand, compileArgs, {
         cwd: runDir,
-        shell: compileShell,
         timeoutMs: compileTimeoutMs,
       });
 

@@ -2,7 +2,8 @@ import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { Room, RunResultMessage } from "./types";
+import { recordAuditEvent } from "./audit";
+import type { Room, RunRecord, RunResultMessage } from "./types";
 import {
   mergeSyncedFilesIntoRoom,
   scanWorkspaceFiles,
@@ -18,6 +19,8 @@ type CommandResult = {
   exitCode: number | null;
   timedOut: boolean;
 };
+
+const MAX_RUN_HISTORY = 50;
 
 export function getLanguageFromPath(
   filePath: string
@@ -138,6 +141,24 @@ function getJavaClassToRun(
   return fallbackClassName;
 }
 
+function createId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function appendRunRecord(
+  room: Room,
+  record: Omit<RunRecord, "id">
+): void {
+  room.runHistory.push({
+    id: createId("run"),
+    ...record,
+  });
+
+  if (room.runHistory.length > MAX_RUN_HISTORY) {
+    room.runHistory = room.runHistory.slice(-MAX_RUN_HISTORY);
+  }
+}
+
 export async function runCodeInRoom(
   room: Room,
   userName: string,
@@ -165,8 +186,19 @@ export async function runCodeInRoom(
     activeDir === "." ? runDir : workspacePathToDiskPath(runDir, activeDir);
 
   const stdinMode = room.stdinMode || "console";
+  const startedAt = new Date().toISOString();
 
   try {
+    recordAuditEvent(room, {
+      type: "run_started",
+      actor: userName,
+      details: {
+        filePath: activeFile.path,
+        language,
+        stdinMode,
+      },
+    });
+
     writeWorkspaceToDisk(runDir, room.files);
 
     fs.mkdirSync(activeDiskDir, {
@@ -240,7 +272,8 @@ export async function runCodeInRoom(
       });
 
       if (compileResult.timedOut || compileResult.exitCode !== 0) {
-        return {
+        const finishedAt = new Date().toISOString();
+        const result = {
           type: "run_result",
           output:
             `[Compile failed]\n\n` +
@@ -250,7 +283,33 @@ export async function runCodeInRoom(
           exitCode: compileResult.exitCode,
           timedOut: compileResult.timedOut,
           runner: userName,
-        };
+        } satisfies RunResultMessage;
+
+        appendRunRecord(room, {
+          runner: userName,
+          filePath: activeFile.path,
+          language,
+          startedAt,
+          finishedAt,
+          output: result.output,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          stdinMode,
+        });
+        recordAuditEvent(room, {
+          type: "run_failed",
+          actor: userName,
+          details: {
+            filePath: activeFile.path,
+            language,
+            exitCode: result.exitCode,
+            timedOut: result.timedOut,
+          },
+        });
+
+        return result;
       }
     }
 
@@ -326,7 +385,8 @@ export async function runCodeInRoom(
 
     output += "\n[Workspace files synced]\n";
 
-    return {
+    const finishedAt = new Date().toISOString();
+    const result = {
       type: "run_result",
       output,
       stdout: runResult.stdout,
@@ -334,7 +394,33 @@ export async function runCodeInRoom(
       exitCode: runResult.exitCode,
       timedOut: runResult.timedOut,
       runner: userName,
-    };
+    } satisfies RunResultMessage;
+
+    appendRunRecord(room, {
+      runner: userName,
+      filePath: activeFile.path,
+      language,
+      startedAt,
+      finishedAt,
+      output: result.output,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      stdinMode,
+    });
+    recordAuditEvent(room, {
+      type: result.exitCode === 0 && !result.timedOut ? "run_finished" : "run_failed",
+      actor: userName,
+      details: {
+        filePath: activeFile.path,
+        language,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+      },
+    });
+
+    return result;
   } finally {
     fs.rmSync(runDir, {
       recursive: true,

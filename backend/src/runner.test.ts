@@ -31,6 +31,9 @@ function createRoom(
     activeFilePath,
     consoleInput: options.consoleInput ?? "",
     stdinMode: options.stdinMode ?? "console",
+    runHistory: [],
+    controlTimeline: [],
+    auditEvents: [],
   };
 }
 
@@ -79,6 +82,19 @@ int main() {
   assert.equal(progress.length, 1);
   assertSuccessfulRun(result);
   assert.match(result.stdout, /7/);
+  assert.equal(room.runHistory.length, 1);
+  assert.equal(room.runHistory[0].runner, "Alice");
+  assert.equal(room.runHistory[0].filePath, "main.cpp");
+  assert.equal(room.runHistory[0].language, "cpp");
+  assert.match(room.runHistory[0].output, /stdout:\n7/);
+  assert.equal(
+    room.auditEvents.some((event) => event.type === "run_started"),
+    true
+  );
+  assert.equal(
+    room.auditEvents.some((event) => event.type === "run_finished"),
+    true
+  );
 });
 
 test("runs Python with console stdin", { skip: !hasPython() }, async () => {
@@ -217,4 +233,25 @@ int main() {
 
   assertSuccessfulRun(result);
   assert.match(result.stdout, /121/);
+});
+
+test("keeps only the latest 50 run history records", { skip: !hasPython() }, async () => {
+  const room = createRoom(
+    [
+      {
+        path: "main.py",
+        content: "print('history')\n",
+      },
+    ],
+    "main.py"
+  );
+
+  for (let i = 0; i < 51; i++) {
+    const { result } = await runRoom(room);
+    assertSuccessfulRun(result);
+  }
+
+  assert.equal(room.runHistory.length, 50);
+  assert.equal(room.runHistory[0].runner, "Alice");
+  assert.match(room.runHistory[0].output, /history/);
 });

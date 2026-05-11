@@ -20,9 +20,17 @@
 
     <hr />
 
-    <button id="connect">Connect</button>
+    <button id="createRoom">Create Room</button>
     <button id="join">Join Room</button>
     <button id="leave">Leave Room</button>
+    <button id="exportSnapshot">Export Snapshot</button>
+    <button id="importSnapshot">Import Snapshot</button>
+    <input
+      id="snapshotFile"
+      type="file"
+      accept="application/json,.json"
+      style="display: none;"
+    />
 
     <hr />
 
@@ -110,8 +118,58 @@
       </div>
     </div>
 
+    <hr />
+
+    <div style="display: flex; gap: 12px;">
+      <section style="width: 520px;">
+        <h3>Run History</h3>
+        <div
+          id="runHistory"
+          style="
+            height: 180px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            overflow: auto;
+            font-family: monospace;
+            font-size: 12px;
+          "
+        ></div>
+      </section>
+
+      <section style="width: 520px;">
+        <h3>Control Timeline</h3>
+        <div
+          id="controlTimeline"
+          style="
+            height: 180px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            overflow: auto;
+            font-family: monospace;
+            font-size: 12px;
+          "
+        ></div>
+      </section>
+
+      <section style="width: 520px;">
+        <h3>Audit Log</h3>
+        <div
+          id="auditEvents"
+          style="
+            height: 180px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            overflow: auto;
+            font-family: monospace;
+            font-size: 12px;
+          "
+        ></div>
+      </section>
+    </div>
+
     <pre id="log" style="display: none;"></pre>
 
+    <!-- Set window.ICPC_BACKEND_URL here when frontend and backend use different hosts. -->
     <script src="./app.js"></script>
   </body>
 </html>

@@ -2,7 +2,6 @@ import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { recordAuditEvent } from "./audit";
 import type { Room, RunRecord, RunResultMessage } from "./types";
 import {
   mergeSyncedFilesIntoRoom,
@@ -189,16 +188,6 @@ export async function runCodeInRoom(
   const startedAt = new Date().toISOString();
 
   try {
-    recordAuditEvent(room, {
-      type: "run_started",
-      actor: userName,
-      details: {
-        filePath: activeFile.path,
-        language,
-        stdinMode,
-      },
-    });
-
     writeWorkspaceToDisk(runDir, room.files);
 
     fs.mkdirSync(activeDiskDir, {
@@ -298,17 +287,6 @@ export async function runCodeInRoom(
           timedOut: result.timedOut,
           stdinMode,
         });
-        recordAuditEvent(room, {
-          type: "run_failed",
-          actor: userName,
-          details: {
-            filePath: activeFile.path,
-            language,
-            exitCode: result.exitCode,
-            timedOut: result.timedOut,
-          },
-        });
-
         return result;
       }
     }
@@ -409,17 +387,6 @@ export async function runCodeInRoom(
       timedOut: result.timedOut,
       stdinMode,
     });
-    recordAuditEvent(room, {
-      type: result.exitCode === 0 && !result.timedOut ? "run_finished" : "run_failed",
-      actor: userName,
-      details: {
-        filePath: activeFile.path,
-        language,
-        exitCode: result.exitCode,
-        timedOut: result.timedOut,
-      },
-    });
-
     return result;
   } finally {
     fs.rmSync(runDir, {

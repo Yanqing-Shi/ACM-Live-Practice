@@ -27,6 +27,24 @@ export function roomExistsOnDisk(roomId: string): boolean {
   return fs.existsSync(getRoomFilePath(roomId));
 }
 
+export function deleteRoomFromDisk(roomId: string): boolean {
+  const existingTimer = pendingSaveTimers.get(roomId);
+
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    pendingSaveTimers.delete(roomId);
+  }
+
+  const filePath = getRoomFilePath(roomId);
+
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  fs.unlinkSync(filePath);
+  return true;
+}
+
 function toPersistedRoom(room: Room): PersistedRoom {
   return {
     savedAt: new Date().toISOString(),
@@ -38,8 +56,6 @@ function toPersistedRoom(room: Room): PersistedRoom {
     consoleInput: room.consoleInput,
     stdinMode: room.stdinMode,
     runHistory: room.runHistory,
-    controlTimeline: room.controlTimeline,
-    auditEvents: room.auditEvents,
   };
 }
 
@@ -68,6 +84,17 @@ export function queueRoomSave(roomId: string, room: Room): void {
   }, 500);
 
   pendingSaveTimers.set(roomId, timer);
+}
+
+export function flushRoomSave(roomId: string, room: Room): void {
+  const existingTimer = pendingSaveTimers.get(roomId);
+
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    pendingSaveTimers.delete(roomId);
+  }
+
+  saveRoomToDisk(roomId, room);
 }
 
 export function loadRoomFromDisk(roomId: string): Room | null {
@@ -100,10 +127,6 @@ export function loadRoomFromDisk(roomId: string): Room | null {
     typeof parsed.consoleInput === "string" ? parsed.consoleInput : "";
   room.stdinMode = parsed.stdinMode === "file" ? "file" : "console";
   room.runHistory = Array.isArray(parsed.runHistory) ? parsed.runHistory : [];
-  room.controlTimeline = Array.isArray(parsed.controlTimeline)
-    ? parsed.controlTimeline
-    : [];
-  room.auditEvents = Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [];
 
   if (!room.files.some((file) => file.path === room.activeFilePath)) {
     room.activeFilePath = room.files[0]?.path || "";

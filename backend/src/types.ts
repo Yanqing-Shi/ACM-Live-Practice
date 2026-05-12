@@ -108,8 +108,6 @@ export type RoomStateMessage = {
   consoleInput: string;
   stdinMode: "console" | "file";
   runHistory: RunRecord[];
-  controlTimeline: ControlEvent[];
-  auditEvents: AuditEvent[];
 };
 
 export type ErrorMessage = {
@@ -144,42 +142,6 @@ export type RunRecord = {
   stdinMode: "console" | "file";
 };
 
-export type ControlEvent = {
-  id: string;
-  type:
-    | "assigned"
-    | "requested"
-    | "approved"
-    | "rejected"
-    | "transferred"
-    | "released";
-  userName: string;
-  targetUserName?: string;
-  at: string;
-};
-
-export type AuditEvent = {
-  id: string;
-  type:
-    | "room_created"
-    | "user_joined"
-    | "user_left"
-    | "file_created"
-    | "folder_created"
-    | "item_renamed"
-    | "item_deleted"
-    | "active_file_switched"
-    | "run_started"
-    | "run_finished"
-    | "run_failed"
-    | "console_input_updated"
-    | "stdin_mode_changed"
-    | "snapshot_restored";
-  actor?: string;
-  at: string;
-  details?: Record<string, string | number | boolean | null>;
-};
-
 export type ClientInfo = {
   socket: WebSocket;
   userName: string;
@@ -195,6 +157,4 @@ export type Room = {
   consoleInput: string;
   stdinMode: "console" | "file";
   runHistory: RunRecord[];
-  controlTimeline: ControlEvent[];
-  auditEvents: AuditEvent[];
 };

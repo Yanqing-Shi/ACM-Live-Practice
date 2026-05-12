@@ -1,4 +1,3 @@
-import { recordAuditEvent } from "./audit";
 import type { ClientInfo, Room } from "./types";
 import {
   addParentFolders,
@@ -14,21 +13,6 @@ export type ActionResult = {
   ok: boolean;
   error?: string;
 };
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function recordControlEvent(
-  room: Room,
-  event: Omit<Room["controlTimeline"][number], "id" | "at">
-): void {
-  room.controlTimeline.push({
-    id: createId("control"),
-    at: new Date().toISOString(),
-    ...event,
-  });
-}
 
 export function createDefaultRoom(): Room {
   return {
@@ -46,8 +30,6 @@ export function createDefaultRoom(): Room {
     consoleInput: "",
     stdinMode: "console",
     runHistory: [],
-    controlTimeline: [],
-    auditEvents: [],
   };
 }
 
@@ -64,17 +46,9 @@ export function addClientToRoom(room: Room, client: ClientInfo): ActionResult {
   }
 
   room.clients.push(client);
-  recordAuditEvent(room, {
-    type: "user_joined",
-    actor: client.userName,
-  });
 
   if (room.currentController === null) {
     room.currentController = client.userName;
-    recordControlEvent(room, {
-      type: "assigned",
-      userName: client.userName,
-    });
   }
 
   return { ok: true };
@@ -97,10 +71,6 @@ export function removeClientFromRoomState(
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== removedUserName
   );
-  recordAuditEvent(room, {
-    type: "user_left",
-    actor: removedUserName,
-  });
 
   let newController = room.currentController;
   let controllerChanged = false;
@@ -109,19 +79,6 @@ export function removeClientFromRoomState(
     newController = room.clients.length > 0 ? room.clients[0].userName : null;
     room.currentController = newController;
     controllerChanged = true;
-
-    if (newController) {
-      recordControlEvent(room, {
-        type: "transferred",
-        userName: removedUserName,
-        targetUserName: newController,
-      });
-    } else {
-      recordControlEvent(room, {
-        type: "released",
-        userName: removedUserName,
-      });
-    }
   }
 
   return {
@@ -142,10 +99,6 @@ export function requestControl(room: Room, userName: string): ActionResult {
 
   if (!room.controlRequests.includes(userName)) {
     room.controlRequests.push(userName);
-    recordControlEvent(room, {
-      type: "requested",
-      userName,
-    });
   }
 
   return { ok: true };
@@ -185,11 +138,6 @@ export function approveControl(
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== targetUserName
   );
-  recordControlEvent(room, {
-    type: "approved",
-    userName: currentUserName,
-    targetUserName,
-  });
 
   return { ok: true };
 }
@@ -209,11 +157,6 @@ export function rejectControl(
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== targetUserName
   );
-  recordControlEvent(room, {
-    type: "rejected",
-    userName: currentUserName,
-    targetUserName,
-  });
 
   return { ok: true };
 }
@@ -246,12 +189,6 @@ export function switchActiveFile(room: Room, targetPath: string): ActionResult {
   }
 
   room.activeFilePath = targetPath;
-  recordAuditEvent(room, {
-    type: "active_file_switched",
-    details: {
-      path: targetPath,
-    },
-  });
   return { ok: true };
 }
 
@@ -285,12 +222,6 @@ export function createFolder(room: Room, rawPath: string): ActionResult {
   if (!room.folders.includes(folderPath)) {
     room.folders.push(folderPath);
   }
-  recordAuditEvent(room, {
-    type: "folder_created",
-    details: {
-      path: folderPath,
-    },
-  });
 
   return { ok: true };
 }
@@ -329,12 +260,6 @@ export function createFile(room: Room, rawPath: string): ActionResult {
   });
 
   room.activeFilePath = newPath;
-  recordAuditEvent(room, {
-    type: "file_created",
-    details: {
-      path: newPath,
-    },
-  });
 
   return { ok: true };
 }
@@ -382,14 +307,6 @@ export function renameItem(
     if (room.activeFilePath === oldPath) {
       room.activeFilePath = newPath;
     }
-    recordAuditEvent(room, {
-      type: "item_renamed",
-      details: {
-        itemType,
-        oldPath,
-        newPath,
-      },
-    });
 
     return { ok: true };
   }
@@ -431,14 +348,6 @@ export function renameItem(
   addParentFolders(room, newPath);
 
   room.folders = Array.from(new Set(room.folders));
-  recordAuditEvent(room, {
-    type: "item_renamed",
-    details: {
-      itemType,
-      oldPath,
-      newPath,
-    },
-  });
 
   return { ok: true };
 }
@@ -472,13 +381,6 @@ export function deleteItem(
     if (room.activeFilePath === targetPath) {
       chooseNextActiveFile(room);
     }
-    recordAuditEvent(room, {
-      type: "item_deleted",
-      details: {
-        itemType,
-        path: targetPath,
-      },
-    });
 
     return { ok: true };
   }
@@ -501,13 +403,6 @@ export function deleteItem(
   if (room.activeFilePath.startsWith(prefix)) {
     chooseNextActiveFile(room);
   }
-  recordAuditEvent(room, {
-    type: "item_deleted",
-    details: {
-      itemType,
-      path: targetPath,
-    },
-  });
 
   return { ok: true };
 }

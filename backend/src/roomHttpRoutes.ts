@@ -13,6 +13,7 @@ import {
   buildRoomSnapshot,
   restoreRoomFromSnapshot,
 } from "./snapshot";
+import { checkRunnerHealth } from "./runnerHealth";
 import type { FileItem, Room } from "./types";
 import {
   isObject,
@@ -55,6 +56,17 @@ export function registerRoomHttpRoutes({
   app.get("/", (_req, res) => {
     res.json({
       message: "ICPC Collab Backend is running",
+    });
+  });
+
+  app.get("/health/runners", async (_req, res) => {
+    const runners = await checkRunnerHealth();
+    const allAvailable = runners.every((runner) => runner.available);
+
+    res.json({
+      ok: allAvailable,
+      platform: process.platform,
+      runners,
     });
   });
 

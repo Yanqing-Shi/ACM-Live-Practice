@@ -14,6 +14,12 @@
     </div>
 
     <div>
+      <label>Share Link:</label>
+      <input id="shareLink" readonly style="width: 520px;" />
+      <button id="copyShareLink">Copy</button>
+    </div>
+
+    <div>
       <label>User Name:</label>
       <input id="userName" placeholder="Alice / Bob" />
     </div>
@@ -135,41 +141,23 @@
           "
         ></div>
       </section>
-
-      <section style="width: 520px;">
-        <h3>Control Timeline</h3>
-        <div
-          id="controlTimeline"
-          style="
-            height: 180px;
-            border: 1px solid #ccc;
-            padding: 8px;
-            overflow: auto;
-            font-family: monospace;
-            font-size: 12px;
-          "
-        ></div>
-      </section>
-
-      <section style="width: 520px;">
-        <h3>Audit Log</h3>
-        <div
-          id="auditEvents"
-          style="
-            height: 180px;
-            border: 1px solid #ccc;
-            padding: 8px;
-            overflow: auto;
-            font-family: monospace;
-            font-size: 12px;
-          "
-        ></div>
-      </section>
     </div>
 
     <pre id="log" style="display: none;"></pre>
 
     <!-- Set window.ICPC_BACKEND_URL here when frontend and backend use different hosts. -->
+    <script src="./config.js"></script>
+    <script src="./validation.js"></script>
+    <script src="./shareLink.js"></script>
+    <script src="./roomApi.js"></script>
+    <script src="./render.js"></script>
+    <script src="./roomController.js"></script>
+    <script src="./controlView.js"></script>
+    <script src="./editorSetup.js"></script>
+    <script src="./workspaceTree.js"></script>
+    <script src="./workspaceActions.js"></script>
+    <script src="./wsClient.js"></script>
+    <script src="./uiEvents.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

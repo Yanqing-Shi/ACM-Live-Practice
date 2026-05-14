@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: icpc-live
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: icpc-live-data
+      mountPath: /app/backend/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production

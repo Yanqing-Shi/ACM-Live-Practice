@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/data
+.git
+.gitignore
+.codex-*
+backend/temp.exe
+backend/temp.cpp
+backend/input.txt

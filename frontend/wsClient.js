@@ -69,6 +69,7 @@ function handleRoomStateMessage(message) {
 
   renderFileList();
   renderRunHistory(message.runHistory || []);
+  renderControlTimeline(message.controlTimeline || []);
   applyRemoteConsoleInput(message.consoleInput);
   applyRemoteStdinMode(message.stdinMode);
   applyRemoteActiveFile();

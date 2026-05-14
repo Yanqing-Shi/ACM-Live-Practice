@@ -26,7 +26,7 @@ npm run dev
 Then open:
 
 ```text
-frontend/test.html
+http://localhost:3001
 ```
 
 The backend defaults to:
@@ -38,7 +38,7 @@ ws://localhost:3001
 
 ## Two-User Test
 
-1. Open `frontend/test.html` in two browser tabs.
+1. Open `http://localhost:3001` in two browser tabs.
 2. In tab 1, enter a user name and click `Create Room`.
 3. Copy the share link or room id.
 4. In tab 2, use the same room id with a different user name and click `Join Room`.
@@ -80,6 +80,10 @@ backend/data/rooms
 ```
 
 That folder is ignored by git. Deleting files there removes saved local rooms.
+
+## Public Deployment
+
+See [PUBLIC_DEPLOY.md](./PUBLIC_DEPLOY.md). The repo can be deployed as one Docker Web Service, so users only need a public URL.
 
 ## Notes
 

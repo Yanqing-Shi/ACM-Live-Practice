@@ -185,6 +185,10 @@ export async function runCodeInRoom(
     activeDir === "." ? runDir : workspacePathToDiskPath(runDir, activeDir);
 
   const stdinMode = room.stdinMode || "console";
+  const inputPath = activeDir === "." ? "input.in" : `${activeDir}/input.in`;
+  const inputFile = room.files.find((f) => f.path === inputPath);
+  const stdin =
+    stdinMode === "console" ? room.consoleInput || "" : inputFile?.content || "";
   const startedAt = new Date().toISOString();
 
   try {
@@ -286,20 +290,10 @@ export async function runCodeInRoom(
           exitCode: result.exitCode,
           timedOut: result.timedOut,
           stdinMode,
+          stdinContent: stdin,
         });
         return result;
       }
-    }
-
-    let stdin = "";
-
-    if (stdinMode === "console") {
-      stdin = room.consoleInput || "";
-    } else {
-      const inputPath = activeDir === "." ? "input.in" : `${activeDir}/input.in`;
-
-      const inputFile = room.files.find((f) => f.path === inputPath);
-      stdin = inputFile?.content || "";
     }
 
     let runCommandName = "";
@@ -386,6 +380,7 @@ export async function runCodeInRoom(
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       stdinMode,
+      stdinContent: stdin,
     });
     return result;
   } finally {

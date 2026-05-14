@@ -1,4 +1,5 @@
 import type { WebSocketServer, WebSocket } from "ws";
+import { appendAuditEvent, appendControlEvent } from "./events";
 import { loadRoomFromDisk, saveRoomToDisk } from "./persistence";
 import {
   addClientToRoom,
@@ -120,14 +121,34 @@ export function registerRoomWebSocket(
       otherRoom.clients = otherRoom.clients.filter(
         (client) => client.userName !== userName
       );
+      appendAuditEvent(otherRoom, {
+        action: "member_left",
+        actor: userName,
+        detail: `Moved to room ${targetRoomId}`,
+      });
 
       otherRoom.controlRequests = otherRoom.controlRequests.filter(
         (name) => name !== userName
       );
 
       if (otherRoom.currentController === userName) {
+        const previousController = otherRoom.currentController;
         otherRoom.currentController =
           otherRoom.clients.length > 0 ? otherRoom.clients[0].userName : null;
+        appendControlEvent(otherRoom, {
+          type: "auto_transferred",
+          actor: "system",
+          targetUserName: otherRoom.currentController || undefined,
+          previousController,
+          nextController: otherRoom.currentController,
+          note: "User joined another room",
+        });
+        appendAuditEvent(otherRoom, {
+          action: "control_auto_transferred",
+          actor: "system",
+          target: otherRoom.currentController || undefined,
+          detail: `${userName} joined another room`,
+        });
       }
 
       if (otherRoom.clients.length === 0) {
@@ -260,8 +281,25 @@ export function registerRoomWebSocket(
           }
 
           try {
+            appendAuditEvent(room, {
+              action: "run_started",
+              actor: userName,
+              target: room.activeFilePath,
+              detail: `stdinMode=${room.stdinMode}`,
+            });
+
             const runResult = await runCodeInRoom(room, userName, (message) => {
               broadcastToRoom(roomId, message);
+            });
+
+            appendAuditEvent(room, {
+              action: "run_finished",
+              actor: userName,
+              target: room.activeFilePath,
+              detail:
+                runResult.timedOut
+                  ? "timeout"
+                  : `exitCode=${runResult.exitCode}`,
             });
 
             broadcastToRoom(roomId, runResult);
@@ -279,6 +317,13 @@ export function registerRoomWebSocket(
               timedOut: false,
               runner: userName,
             });
+            appendAuditEvent(room, {
+              action: "run_finished",
+              actor: userName,
+              target: room.activeFilePath,
+              detail: `system error: ${message}`,
+            });
+            broadcastRoomState(roomId);
           }
 
           return;
@@ -416,6 +461,11 @@ export function registerRoomWebSocket(
           }
 
           room.stdinMode = data.stdinMode;
+          appendAuditEvent(room, {
+            action: "stdin_mode_updated",
+            actor: userName,
+            target: data.stdinMode,
+          });
           broadcastRoomState(roomId);
           return;
         }
@@ -424,7 +474,16 @@ export function registerRoomWebSocket(
           const context = getClientRoom(socket);
           if (!context) return;
 
-          const { room, roomId } = context;
+          const { room, roomId, userName } = context;
+
+          if (room.currentController !== userName) {
+            sendMessage(socket, {
+              type: "error",
+              message: "Only controller can switch files",
+            });
+            return;
+          }
+
           const result = switchActiveFile(room, data.path);
 
           if (!result.ok) {
@@ -435,6 +494,11 @@ export function registerRoomWebSocket(
             return;
           }
 
+          appendAuditEvent(room, {
+            action: "file_switched",
+            actor: userName,
+            target: data.path,
+          });
           broadcastRoomState(roomId);
           return;
         }
@@ -463,6 +527,11 @@ export function registerRoomWebSocket(
             return;
           }
 
+          appendAuditEvent(room, {
+            action: "folder_created",
+            actor: userName,
+            target: data.path,
+          });
           broadcastRoomState(roomId);
           return;
         }
@@ -491,6 +560,11 @@ export function registerRoomWebSocket(
             return;
           }
 
+          appendAuditEvent(room, {
+            action: "file_created",
+            actor: userName,
+            target: data.path,
+          });
           broadcastRoomState(roomId);
           return;
         }
@@ -524,6 +598,12 @@ export function registerRoomWebSocket(
             return;
           }
 
+          appendAuditEvent(room, {
+            action: "item_renamed",
+            actor: userName,
+            target: data.newPath,
+            detail: `${data.itemType}: ${data.oldPath} -> ${data.newPath}`,
+          });
           broadcastRoomState(roomId);
           return;
         }
@@ -552,6 +632,12 @@ export function registerRoomWebSocket(
             return;
           }
 
+          appendAuditEvent(room, {
+            action: "item_deleted",
+            actor: userName,
+            target: data.path,
+            detail: data.itemType,
+          });
           broadcastRoomState(roomId);
           return;
         }

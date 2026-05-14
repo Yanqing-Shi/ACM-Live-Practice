@@ -17,6 +17,7 @@ export function buildRoomStateMessage(
     consoleInput: room.consoleInput,
     stdinMode: room.stdinMode,
     runHistory: room.runHistory,
+    controlTimeline: room.controlTimeline,
   };
 }
 

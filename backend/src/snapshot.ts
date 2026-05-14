@@ -1,4 +1,4 @@
-import type { FileItem, Room } from "./types";
+import type { FileItem, Room, RunRecord } from "./types";
 import {
   addParentFolders,
   isValidWorkspacePath,
@@ -19,6 +19,7 @@ export function buildRoomSnapshot(roomId: string, room: Room) {
     consoleInput: room.consoleInput,
     stdinMode: room.stdinMode,
     runHistory: room.runHistory,
+    controlTimeline: room.controlTimeline,
   };
 }
 
@@ -103,6 +104,34 @@ function sanitizeSnapshotFolders(
   return Array.from(new Set(tempRoom.folders));
 }
 
+function sanitizeRunHistory(value: unknown): Room["runHistory"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<Room["runHistory"][number]> => {
+      return typeof item === "object" && item !== null;
+    })
+    .map((item): RunRecord => ({
+      id: typeof item.id === "string" ? item.id : "",
+      runner: typeof item.runner === "string" ? item.runner : "",
+      filePath: typeof item.filePath === "string" ? item.filePath : "",
+      language: typeof item.language === "string" ? item.language : "",
+      startedAt: typeof item.startedAt === "string" ? item.startedAt : "",
+      finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : "",
+      output: typeof item.output === "string" ? item.output : "",
+      stdout: typeof item.stdout === "string" ? item.stdout : "",
+      stderr: typeof item.stderr === "string" ? item.stderr : "",
+      exitCode: typeof item.exitCode === "number" ? item.exitCode : null,
+      timedOut: item.timedOut === true,
+      stdinMode: item.stdinMode === "file" ? "file" : "console",
+      stdinContent:
+        typeof item.stdinContent === "string" ? item.stdinContent : "",
+    }))
+    .slice(-50);
+}
+
 export function restoreRoomFromSnapshot(room: Room, snapshot: unknown): void {
   if (!isObject(snapshot)) {
     throw new Error("Snapshot must be a JSON object");
@@ -128,9 +157,10 @@ export function restoreRoomFromSnapshot(room: Room, snapshot: unknown): void {
   room.consoleInput =
     typeof snapshot.consoleInput === "string" ? snapshot.consoleInput : "";
   room.stdinMode = snapshot.stdinMode === "file" ? "file" : "console";
-  room.runHistory = Array.isArray(snapshot.runHistory)
-    ? (snapshot.runHistory.slice(-50) as Room["runHistory"])
-    : [];
+  room.runHistory = sanitizeRunHistory(snapshot.runHistory);
+  room.controlTimeline = Array.isArray(snapshot.controlTimeline)
+    ? (snapshot.controlTimeline.slice(-100) as Room["controlTimeline"])
+    : room.controlTimeline;
 
   if (requestedController && onlineUsers.has(requestedController)) {
     room.currentController = requestedController;

@@ -32,6 +32,8 @@ function createRoom(
     consoleInput: options.consoleInput ?? "",
     stdinMode: options.stdinMode ?? "console",
     runHistory: [],
+    controlTimeline: [],
+    auditEvents: [],
   };
 }
 
@@ -84,6 +86,7 @@ int main() {
   assert.equal(room.runHistory[0].runner, "Alice");
   assert.equal(room.runHistory[0].filePath, "main.cpp");
   assert.equal(room.runHistory[0].language, "cpp");
+  assert.equal(room.runHistory[0].stdinContent, "2 5\n");
   assert.match(room.runHistory[0].output, /stdout:\n7/);
 });
 
@@ -223,6 +226,7 @@ int main() {
 
   assertSuccessfulRun(result);
   assert.match(result.stdout, /121/);
+  assert.equal(room.runHistory[0].stdinContent, "11\n");
 });
 
 test("keeps only the latest 50 run history records", { skip: !hasPython() }, async () => {

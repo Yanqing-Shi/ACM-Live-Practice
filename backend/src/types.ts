@@ -108,6 +108,7 @@ export type RoomStateMessage = {
   consoleInput: string;
   stdinMode: "console" | "file";
   runHistory: RunRecord[];
+  controlTimeline: ControlEvent[];
 };
 
 export type ErrorMessage = {
@@ -140,6 +141,53 @@ export type RunRecord = {
   exitCode: number | null;
   timedOut: boolean;
   stdinMode: "console" | "file";
+  stdinContent: string;
+};
+
+export type ControlEventType =
+  | "assigned"
+  | "requested"
+  | "approved"
+  | "rejected"
+  | "auto_transferred";
+
+export type ControlEvent = {
+  id: string;
+  type: ControlEventType;
+  createdAt: string;
+  actor: string;
+  targetUserName?: string;
+  previousController?: string | null;
+  nextController?: string | null;
+  note?: string;
+};
+
+export type AuditEventAction =
+  | "member_joined"
+  | "member_left"
+  | "control_requested"
+  | "control_approved"
+  | "control_rejected"
+  | "control_auto_transferred"
+  | "file_updated"
+  | "file_switched"
+  | "file_created"
+  | "folder_created"
+  | "item_renamed"
+  | "item_deleted"
+  | "console_input_updated"
+  | "stdin_mode_updated"
+  | "run_started"
+  | "run_finished"
+  | "snapshot_restored";
+
+export type AuditEvent = {
+  id: string;
+  action: AuditEventAction;
+  createdAt: string;
+  actor: string;
+  target?: string;
+  detail?: string;
 };
 
 export type ClientInfo = {
@@ -157,4 +205,6 @@ export type Room = {
   consoleInput: string;
   stdinMode: "console" | "file";
   runHistory: RunRecord[];
+  controlTimeline: ControlEvent[];
+  auditEvents: AuditEvent[];
 };

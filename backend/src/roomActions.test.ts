@@ -23,6 +23,10 @@ function mockClient(userName: string): ClientInfo {
   };
 }
 
+function lastControlEvent(room: ReturnType<typeof createDefaultRoom>) {
+  return room.controlTimeline[room.controlTimeline.length - 1];
+}
+
 test("first joined user becomes controller", () => {
   const room = createDefaultRoom();
 
@@ -34,6 +38,10 @@ test("first joined user becomes controller", () => {
     ["Alice"]
   );
   assert.equal(room.currentController, "Alice");
+  assert.equal(room.controlTimeline.length, 1);
+  assert.equal(room.controlTimeline[0].type, "assigned");
+  assert.equal(room.controlTimeline[0].nextController, "Alice");
+  assert.equal(room.auditEvents[0].action, "member_joined");
 });
 
 test("duplicate username is rejected", () => {
@@ -58,6 +66,8 @@ test("controller leaving transfers control to next user", () => {
   assert.equal(result.roomEmpty, false);
   assert.equal(result.controllerChanged, true);
   assert.equal(room.currentController, "Bob");
+  assert.equal(lastControlEvent(room)?.type, "auto_transferred");
+  assert.equal(lastControlEvent(room)?.nextController, "Bob");
 });
 
 test("control request can be approved and rejected", () => {
@@ -68,14 +78,19 @@ test("control request can be approved and rejected", () => {
 
   assert.equal(requestControl(room, "Bob").ok, true);
   assert.deepEqual(room.controlRequests, ["Bob"]);
+  assert.equal(lastControlEvent(room)?.type, "requested");
 
   assert.equal(approveControl(room, "Alice", "Bob").ok, true);
   assert.equal(room.currentController, "Bob");
   assert.deepEqual(room.controlRequests, []);
+  assert.equal(lastControlEvent(room)?.type, "approved");
+  assert.equal(lastControlEvent(room)?.previousController, "Alice");
+  assert.equal(lastControlEvent(room)?.nextController, "Bob");
 
   assert.equal(requestControl(room, "Alice").ok, true);
   assert.equal(rejectControl(room, "Bob", "Alice").ok, true);
   assert.deepEqual(room.controlRequests, []);
+  assert.equal(lastControlEvent(room)?.type, "rejected");
 });
 
 test("non-controller cannot approve or reject requests", () => {

@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { randomBytes } from "crypto";
+import { appendAuditEvent } from "./events";
 import { createDefaultRoom } from "./roomActions";
 import {
   deleteRoomFromDisk,
@@ -53,7 +54,7 @@ export function registerRoomHttpRoutes({
   rooms,
   broadcastRoomState,
 }: RegisterRoomHttpRoutesOptions): void {
-  app.get("/", (_req, res) => {
+  app.get("/health", (_req, res) => {
     res.json({
       message: "ICPC Collab Backend is running",
     });
@@ -241,6 +242,11 @@ export function registerRoomHttpRoutes({
 
     try {
       restoreRoomFromSnapshot(room, req.body);
+      appendAuditEvent(room, {
+        action: "snapshot_restored",
+        actor: "system",
+        target: roomId,
+      });
     } catch (error) {
       res.status(400).json({
         type: "error",

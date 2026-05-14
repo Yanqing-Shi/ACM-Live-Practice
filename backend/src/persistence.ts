@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { createDefaultRoom } from "./roomActions";
-import type { Room } from "./types";
+import type { Room, RunRecord } from "./types";
 
-type PersistedRoom = Omit<Room, "clients"> & {
+type PersistedRoom = Omit<Room, "clients" | "auditEvents"> & {
   savedAt: string;
 };
 
@@ -56,7 +56,65 @@ function toPersistedRoom(room: Room): PersistedRoom {
     consoleInput: room.consoleInput,
     stdinMode: room.stdinMode,
     runHistory: room.runHistory,
+    controlTimeline: room.controlTimeline,
   };
+}
+
+function sanitizeRunHistory(value: unknown): RunRecord[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<RunRecord> => {
+      return typeof item === "object" && item !== null;
+    })
+    .map((item): RunRecord => ({
+      id: typeof item.id === "string" ? item.id : "",
+      runner: typeof item.runner === "string" ? item.runner : "",
+      filePath: typeof item.filePath === "string" ? item.filePath : "",
+      language: typeof item.language === "string" ? item.language : "",
+      startedAt: typeof item.startedAt === "string" ? item.startedAt : "",
+      finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : "",
+      output: typeof item.output === "string" ? item.output : "",
+      stdout: typeof item.stdout === "string" ? item.stdout : "",
+      stderr: typeof item.stderr === "string" ? item.stderr : "",
+      exitCode: typeof item.exitCode === "number" ? item.exitCode : null,
+      timedOut: item.timedOut === true,
+      stdinMode: item.stdinMode === "file" ? "file" : "console",
+      stdinContent:
+        typeof item.stdinContent === "string" ? item.stdinContent : "",
+    }));
+}
+
+export function clearPersistedAuditEvents(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    return;
+  }
+
+  for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const filePath = path.join(DATA_DIR, entry.name);
+
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+
+      if (!Object.prototype.hasOwnProperty.call(parsed, "auditEvents")) {
+        continue;
+      }
+
+      delete parsed.auditEvents;
+      fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), "utf8");
+    } catch {
+      continue;
+    }
+  }
 }
 
 export function saveRoomToDisk(roomId: string, room: Room): void {
@@ -126,7 +184,11 @@ export function loadRoomFromDisk(roomId: string): Room | null {
   room.consoleInput =
     typeof parsed.consoleInput === "string" ? parsed.consoleInput : "";
   room.stdinMode = parsed.stdinMode === "file" ? "file" : "console";
-  room.runHistory = Array.isArray(parsed.runHistory) ? parsed.runHistory : [];
+  room.runHistory = sanitizeRunHistory(parsed.runHistory);
+  room.controlTimeline = Array.isArray(parsed.controlTimeline)
+    ? parsed.controlTimeline
+    : [];
+  room.auditEvents = [];
 
   if (!room.files.some((file) => file.path === room.activeFilePath)) {
     room.activeFilePath = room.files[0]?.path || "";

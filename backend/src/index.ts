@@ -2,7 +2,10 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
+import fs from "fs";
+import path from "path";
 import {
+  clearPersistedAuditEvents,
   flushRoomSave,
   queueRoomSave,
 } from "./persistence";
@@ -18,6 +21,39 @@ app.use(express.json({ limit: "5mb" }));
 const PORT = Number(process.env.PORT || 3001);
 
 const rooms: Record<string, Room> = {};
+
+clearPersistedAuditEvents();
+
+function findFrontendDir(): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), "..", "frontend"),
+    path.resolve(process.cwd(), "frontend"),
+    path.resolve(__dirname, "..", "..", "frontend"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(
+    path.join(candidate, "test.html")
+  )) || null;
+}
+
+function registerFrontendRoutes(): void {
+  const frontendDir = findFrontendDir();
+
+  if (!frontendDir) {
+    console.warn("[FRONTEND] frontend/test.html not found; serving API only");
+    return;
+  }
+
+  const entryFile = path.join(frontendDir, "test.html");
+
+  app.use(express.static(frontendDir));
+  app.get("/", (_req, res) => {
+    res.sendFile(entryFile);
+  });
+  app.get("/room/:roomId", (_req, res) => {
+    res.sendFile(entryFile);
+  });
+}
 
 function broadcastRoomState(roomId: string): void {
   const room = rooms[roomId];
@@ -45,6 +81,7 @@ registerRoomHttpRoutes({
   rooms,
   broadcastRoomState,
 });
+registerFrontendRoutes();
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server });

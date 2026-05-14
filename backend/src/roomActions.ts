@@ -1,4 +1,5 @@
 import type { ClientInfo, Room } from "./types";
+import { appendAuditEvent, appendControlEvent } from "./events";
 import {
   addParentFolders,
   chooseNextActiveFile,
@@ -30,6 +31,8 @@ export function createDefaultRoom(): Room {
     consoleInput: "",
     stdinMode: "console",
     runHistory: [],
+    controlTimeline: [],
+    auditEvents: [],
   };
 }
 
@@ -46,9 +49,21 @@ export function addClientToRoom(room: Room, client: ClientInfo): ActionResult {
   }
 
   room.clients.push(client);
+  appendAuditEvent(room, {
+    action: "member_joined",
+    actor: client.userName,
+  });
 
   if (room.currentController === null) {
     room.currentController = client.userName;
+    appendControlEvent(room, {
+      type: "assigned",
+      actor: "system",
+      targetUserName: client.userName,
+      previousController: null,
+      nextController: client.userName,
+      note: "First room member became controller",
+    });
   }
 
   return { ok: true };
@@ -71,6 +86,10 @@ export function removeClientFromRoomState(
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== removedUserName
   );
+  appendAuditEvent(room, {
+    action: "member_left",
+    actor: removedUserName,
+  });
 
   let newController = room.currentController;
   let controllerChanged = false;
@@ -79,6 +98,20 @@ export function removeClientFromRoomState(
     newController = room.clients.length > 0 ? room.clients[0].userName : null;
     room.currentController = newController;
     controllerChanged = true;
+    appendControlEvent(room, {
+      type: "auto_transferred",
+      actor: "system",
+      targetUserName: newController || undefined,
+      previousController: removedUserName,
+      nextController: newController,
+      note: "Previous controller left the room",
+    });
+    appendAuditEvent(room, {
+      action: "control_auto_transferred",
+      actor: "system",
+      target: newController || undefined,
+      detail: `Previous controller ${removedUserName} left`,
+    });
   }
 
   return {
@@ -99,6 +132,18 @@ export function requestControl(room: Room, userName: string): ActionResult {
 
   if (!room.controlRequests.includes(userName)) {
     room.controlRequests.push(userName);
+    appendControlEvent(room, {
+      type: "requested",
+      actor: userName,
+      targetUserName: room.currentController || undefined,
+      previousController: room.currentController,
+      nextController: room.currentController,
+    });
+    appendAuditEvent(room, {
+      action: "control_requested",
+      actor: userName,
+      target: room.currentController || undefined,
+    });
   }
 
   return { ok: true };
@@ -134,10 +179,23 @@ export function approveControl(
     };
   }
 
+  const previousController = room.currentController;
   room.currentController = targetUserName;
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== targetUserName
   );
+  appendControlEvent(room, {
+    type: "approved",
+    actor: currentUserName,
+    targetUserName,
+    previousController,
+    nextController: targetUserName,
+  });
+  appendAuditEvent(room, {
+    action: "control_approved",
+    actor: currentUserName,
+    target: targetUserName,
+  });
 
   return { ok: true };
 }
@@ -154,9 +212,26 @@ export function rejectControl(
     };
   }
 
+  const hadRequest = room.controlRequests.includes(targetUserName);
+
   room.controlRequests = room.controlRequests.filter(
     (name) => name !== targetUserName
   );
+
+  if (hadRequest) {
+    appendControlEvent(room, {
+      type: "rejected",
+      actor: currentUserName,
+      targetUserName,
+      previousController: room.currentController,
+      nextController: room.currentController,
+    });
+    appendAuditEvent(room, {
+      action: "control_rejected",
+      actor: currentUserName,
+      target: targetUserName,
+    });
+  }
 
   return { ok: true };
 }

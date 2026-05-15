@@ -201,6 +201,15 @@ function renderFileList() {
   const tree = buildFileTree(currentFolders, currentFiles);
   const entries = sortTreeEntries(Object.entries(tree));
 
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.style.color = "#666";
+    empty.style.fontStyle = "italic";
+    empty.textContent = "No files yet.";
+    fileList.appendChild(empty);
+    return;
+  }
+
   entries.forEach(([name, node]) => {
     renderTreeNode(name, node, 0, name);
   });

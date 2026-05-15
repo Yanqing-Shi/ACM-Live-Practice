@@ -11,6 +11,7 @@ Local-first ICPC/UCup collaboration prototype. A team shares one workspace, one 
 - Console stdin or `input.in` file stdin
 - Run C, C++, Python, Java, and Kotlin
 - Room snapshot export/import
+- Workspace ZIP export for post-contest archive
 - Local room persistence under `backend/data/rooms`
 
 ## Start Locally
@@ -85,6 +86,24 @@ That folder is ignored by git. Deleting files there removes saved local rooms.
 
 See [PUBLIC_DEPLOY.md](./PUBLIC_DEPLOY.md). The repo can be deployed as one Docker Web Service, so users only need a public URL.
 
+## VS Code Extension
+
+The first VS Code client lives in:
+
+```text
+vscode-extension
+```
+
+Development:
+
+```powershell
+cd vscode-extension
+npm install
+npm run compile
+```
+
+Open `vscode-extension` in VS Code and press `F5` to launch an Extension Development Host.
+
 ## Notes
 
-New rooms intentionally start with a blank `main.cpp`. The platform should not pre-fill contest templates because official contests should match the team's real workflow.
+New rooms intentionally start with an empty workspace. Teams create their own contest files and folders just like they would on a real contest machine.

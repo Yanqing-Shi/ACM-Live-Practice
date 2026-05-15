@@ -21,13 +21,8 @@ export function createDefaultRoom(): Room {
     currentController: null,
     controlRequests: [],
     folders: [],
-    files: [
-      {
-        path: "main.cpp",
-        content: "",
-      },
-    ],
-    activeFilePath: "main.cpp",
+    files: [],
+    activeFilePath: "",
     consoleInput: "",
     stdinMode: "console",
     runHistory: [],

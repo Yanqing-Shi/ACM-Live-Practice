@@ -34,3 +34,11 @@ async function apiImportSnapshot(roomId, snapshot) {
 
   return response;
 }
+
+async function apiExportWorkspaceZip(roomId) {
+  const response = await fetch(
+    `${getBackendHttpUrl()}/rooms/${encodeURIComponent(roomId)}/workspace.zip`
+  );
+
+  return response;
+}

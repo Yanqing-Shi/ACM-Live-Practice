@@ -45,7 +45,7 @@ function updateEditorPermission(currentController) {
     "Current controller: " + (currentController || "none");
 
   const canEdit =
-    currentController && currentController === currentUserName;
+    currentController && currentController === currentUserName && activeFilePath;
 
   if (editor) {
     editor.updateOptions({
@@ -55,5 +55,7 @@ function updateEditorPermission(currentController) {
 
   editInfo.textContent = canEdit
     ? "Editing status: you can edit"
-    : "Editing status: read-only";
+    : activeFilePath
+      ? "Editing status: read-only"
+      : "Editing status: no file selected";
 }

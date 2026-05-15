@@ -63,13 +63,6 @@ function sanitizeSnapshotFiles(value: unknown): FileItem[] {
     });
   }
 
-  if (files.length === 0) {
-    files.push({
-      path: "main.cpp",
-      content: "",
-    });
-  }
-
   return files;
 }
 
@@ -153,7 +146,7 @@ export function restoreRoomFromSnapshot(room: Room, snapshot: unknown): void {
 
   room.files = files;
   room.folders = folders;
-  room.activeFilePath = activeFileExists ? activeFilePath : files[0].path;
+  room.activeFilePath = activeFileExists ? activeFilePath : files[0]?.path || "";
   room.consoleInput =
     typeof snapshot.consoleInput === "string" ? snapshot.consoleInput : "";
   room.stdinMode = snapshot.stdinMode === "file" ? "file" : "console";

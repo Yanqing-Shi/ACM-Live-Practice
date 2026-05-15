@@ -14,6 +14,7 @@ import {
   buildRoomSnapshot,
   restoreRoomFromSnapshot,
 } from "./snapshot";
+import { buildWorkspaceZip } from "./workspaceExport";
 import { checkRunnerHealth } from "./runnerHealth";
 import type { FileItem, Room } from "./types";
 import {
@@ -224,6 +225,37 @@ export function registerRoomHttpRoutes({
     }
 
     res.json(buildRoomSnapshot(roomId, room));
+  });
+
+  app.get("/rooms/:roomId/workspace.zip", (req, res) => {
+    const { roomId } = req.params;
+
+    if (!isValidRoomId(roomId)) {
+      res.status(400).json({
+        type: "error",
+        message: "Invalid roomId",
+      });
+      return;
+    }
+
+    const room = rooms[roomId] || loadRoomFromDisk(roomId);
+
+    if (!room) {
+      res.status(404).json({
+        type: "error",
+        message: `Room "${roomId}" not found`,
+      });
+      return;
+    }
+
+    const zip = buildWorkspaceZip(roomId, room);
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="icpc-room-${roomId}-workspace.zip"`
+    );
+    res.send(zip);
   });
 
   app.post("/rooms/:roomId/snapshot", (req, res) => {

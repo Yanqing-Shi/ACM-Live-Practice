@@ -1,0 +1,218 @@
+{
+  "name": "icpc-live-vscode",
+  "displayName": "ICPC Live",
+  "description": "VS Code client for ICPC Live single-controller collaboration rooms.",
+  "version": "0.0.1",
+  "publisher": "icpc-live",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:icpcLive.joinRoom",
+    "onCommand:icpcLive.createFile",
+    "onCommand:icpcLive.createFolder",
+    "onCommand:icpcLive.renameItem",
+    "onCommand:icpcLive.deleteItem",
+    "onCommand:icpcLive.setConsoleInput",
+    "onCommand:icpcLive.setStdinMode",
+    "onView:icpcLive.workspace",
+    "onView:icpcLive.members",
+    "onView:icpcLive.runHistory"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "ICPC Live",
+      "properties": {
+        "icpcLive.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3001",
+          "description": "ICPC Live backend HTTP URL. The extension converts it to ws/wss for room sync."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "icpcLive.setServerUrl",
+        "title": "ICPC Live: Set Server URL"
+      },
+      {
+        "command": "icpcLive.joinRoom",
+        "title": "ICPC Live: Join Room",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "icpcLive.leaveRoom",
+        "title": "ICPC Live: Leave Room",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "icpcLive.requestControl",
+        "title": "ICPC Live: Request Control",
+        "icon": "$(key)"
+      },
+      {
+        "command": "icpcLive.approveControl",
+        "title": "ICPC Live: Approve Control Request"
+      },
+      {
+        "command": "icpcLive.rejectControl",
+        "title": "ICPC Live: Reject Control Request"
+      },
+      {
+        "command": "icpcLive.runCode",
+        "title": "ICPC Live: Run Active Room File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "icpcLive.createFile",
+        "title": "ICPC Live: Create File",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "icpcLive.createFolder",
+        "title": "ICPC Live: Create Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "icpcLive.renameItem",
+        "title": "ICPC Live: Rename Item"
+      },
+      {
+        "command": "icpcLive.deleteItem",
+        "title": "ICPC Live: Delete Item"
+      },
+      {
+        "command": "icpcLive.setConsoleInput",
+        "title": "ICPC Live: Set Console Input",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "icpcLive.setStdinMode",
+        "title": "ICPC Live: Set Stdin Mode",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "icpcLive.openRunOutput",
+        "title": "ICPC Live: Open Run Output"
+      },
+      {
+        "command": "icpcLive.openRoomFile",
+        "title": "ICPC Live: Open Room File"
+      },
+      {
+        "command": "icpcLive.refresh",
+        "title": "ICPC Live: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "icpcLive",
+          "title": "ICPC Live",
+          "icon": "resources/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "icpcLive": [
+        {
+          "id": "icpcLive.workspace",
+          "name": "Workspace"
+        },
+        {
+          "id": "icpcLive.members",
+          "name": "Members"
+        },
+        {
+          "id": "icpcLive.runHistory",
+          "name": "Run History"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "icpcLive.joinRoom",
+          "when": "view == icpcLive.workspace",
+          "group": "navigation@1"
+        },
+        {
+          "command": "icpcLive.leaveRoom",
+          "when": "view == icpcLive.workspace",
+          "group": "navigation@2"
+        },
+        {
+          "command": "icpcLive.requestControl",
+          "when": "view == icpcLive.workspace",
+          "group": "navigation@3"
+        },
+        {
+          "command": "icpcLive.runCode",
+          "when": "view == icpcLive.runHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "icpcLive.setConsoleInput",
+          "when": "view == icpcLive.runHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "icpcLive.setStdinMode",
+          "when": "view == icpcLive.runHistory",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "icpcLive.openRoomFile",
+          "when": "view == icpcLive.workspace && viewItem == file",
+          "group": "inline"
+        },
+        {
+          "command": "icpcLive.createFile",
+          "when": "view == icpcLive.workspace && (viewItem == folder || viewItem == empty)",
+          "group": "inline@1"
+        },
+        {
+          "command": "icpcLive.createFolder",
+          "when": "view == icpcLive.workspace && (viewItem == folder || viewItem == empty)",
+          "group": "inline@2"
+        },
+        {
+          "command": "icpcLive.renameItem",
+          "when": "view == icpcLive.workspace && (viewItem == file || viewItem == folder)",
+          "group": "2_workspace"
+        },
+        {
+          "command": "icpcLive.deleteItem",
+          "when": "view == icpcLive.workspace && (viewItem == file || viewItem == folder)",
+          "group": "2_workspace"
+        },
+        {
+          "command": "icpcLive.openRunOutput",
+          "when": "view == icpcLive.runHistory && viewItem == run",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.0"
+  }
+}

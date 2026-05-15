@@ -17,6 +17,7 @@ function initializeEditor() {
     editor.onDidChangeModelContent(() => {
       if (isApplyingRemoteCode) return;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!activeFilePath) return;
 
       ws.send(
         JSON.stringify({

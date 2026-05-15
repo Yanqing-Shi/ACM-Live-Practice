@@ -9,12 +9,13 @@ function setButtonDisabled(id, disabled) {
 function updateActionAvailability() {
   const joined = isJoinedRoom();
   const canControl = joined && currentControllerName === currentUserName;
+  const hasActiveFile = activeFilePath !== "";
 
   setButtonDisabled("createRoom", joined);
   setButtonDisabled("join", joined);
   setButtonDisabled("leave", !joined);
   setButtonDisabled("requestControl", !joined || canControl);
-  setButtonDisabled("runCode", !canControl);
+  setButtonDisabled("runCode", !canControl || !hasActiveFile);
   setButtonDisabled("createFile", !canControl);
   setButtonDisabled("createFolder", !canControl);
 }
@@ -99,6 +100,43 @@ async function exportRoomSnapshot() {
     write(`Snapshot exported for room ${roomId}`);
   } catch (error) {
     write(`Snapshot export failed: ${String(error)}`);
+  }
+}
+
+async function exportWorkspaceZip() {
+  const roomId = roomIdInput.value.trim();
+
+  if (!roomId) {
+    write("Please enter roomId before exporting workspace");
+    return;
+  }
+
+  if (!validateRoomId(roomId)) {
+    return;
+  }
+
+  try {
+    const response = await apiExportWorkspaceZip(roomId);
+
+    if (!response.ok) {
+      write(`Workspace export failed: ${response.status}`);
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `icpc-room-${roomId}-workspace.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    write(`Workspace exported for room ${roomId}`);
+  } catch (error) {
+    write(`Workspace export failed: ${String(error)}`);
   }
 }
 

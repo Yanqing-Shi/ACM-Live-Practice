@@ -38,6 +38,8 @@ test("first joined user becomes controller", () => {
     ["Alice"]
   );
   assert.equal(room.currentController, "Alice");
+  assert.deepEqual(room.files, []);
+  assert.equal(room.activeFilePath, "");
   assert.equal(room.controlTimeline.length, 1);
   assert.equal(room.controlTimeline[0].type, "assigned");
   assert.equal(room.controlTimeline[0].nextController, "Alice");
@@ -143,6 +145,7 @@ test("rename folder moves nested files and active file", () => {
 test("delete active file chooses the next available file", () => {
   const room = createDefaultRoom();
 
+  createFile(room, "main.cpp");
   createFile(room, "A/main.cpp");
   const result = deleteItem(room, "file", "A/main.cpp");
 
@@ -161,5 +164,5 @@ test("update active file content edits only the active file", () => {
     room.files.find((file) => file.path === "A/main.cpp")?.content,
     "hello"
   );
-  assert.equal(room.files.find((file) => file.path === "main.cpp")?.content, "");
+  assert.equal(room.files.length, 1);
 });

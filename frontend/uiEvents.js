@@ -49,6 +49,10 @@ function bindUiEvents() {
     exportRoomSnapshot();
   };
 
+  document.getElementById("exportWorkspaceZip").onclick = () => {
+    exportWorkspaceZip();
+  };
+
   document.getElementById("importSnapshot").onclick = () => {
     if (snapshotFileInput) {
       snapshotFileInput.value = "";

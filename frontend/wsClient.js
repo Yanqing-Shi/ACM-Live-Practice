@@ -44,15 +44,14 @@ function applyRemoteActiveFile() {
       editor.setValue(file.content);
     }
   } else {
-    editor.setValue("// No file selected");
+    editor.setValue("No file selected. Create a file in the workspace to start.");
   }
 
   isApplyingRemoteCode = false;
+  updateEditorPermission(currentControllerName);
 }
 
 function handleRoomStateMessage(message) {
-  updateEditorPermission(message.currentController);
-
   renderControlRequests(
     message.controlRequests,
     message.currentController
@@ -65,6 +64,7 @@ function handleRoomStateMessage(message) {
     ? message.roomId
     : "";
   currentControllerName = message.currentController || "";
+  updateEditorPermission(message.currentController);
   updateActionAvailability();
 
   renderFileList();

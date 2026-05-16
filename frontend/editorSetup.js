@@ -18,6 +18,7 @@ function initializeEditor() {
       if (isApplyingRemoteCode) return;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (!activeFilePath) return;
+      if (!canCurrentUserControl()) return;
 
       ws.send(
         JSON.stringify({

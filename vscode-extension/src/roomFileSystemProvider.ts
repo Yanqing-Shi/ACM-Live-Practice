@@ -1,4 +1,9 @@
 import * as vscode from "vscode";
+import {
+  roomUriString,
+  uriPathToWorkspacePath,
+  WRITABLE_ROOM_SCHEME,
+} from "./permissionModes";
 import { RoomClient } from "./roomClient";
 
 export class RoomFileSystemProvider implements vscode.FileSystemProvider {
@@ -10,7 +15,7 @@ export class RoomFileSystemProvider implements vscode.FileSystemProvider {
       const events: vscode.FileChangeEvent[] = [
         {
           type: vscode.FileChangeType.Changed,
-          uri: vscode.Uri.parse(`icpc-room://${this.client.roomId}/`),
+          uri: vscode.Uri.parse(`${WRITABLE_ROOM_SCHEME}://${this.client.roomId}/`),
         },
       ];
 
@@ -175,9 +180,9 @@ export class RoomFileSystemProvider implements vscode.FileSystemProvider {
 }
 
 export function uriToWorkspacePath(uri: vscode.Uri): string {
-  return decodeURIComponent(uri.path.replace(/^\/+/, ""));
+  return uriPathToWorkspacePath(uri.path);
 }
 
 export function workspacePathToUri(roomId: string, path: string): vscode.Uri {
-  return vscode.Uri.parse(`icpc-room://${roomId}/${encodeURI(path)}`);
+  return vscode.Uri.parse(roomUriString(roomId, path, "writable"));
 }

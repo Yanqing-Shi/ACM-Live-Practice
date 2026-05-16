@@ -86,6 +86,7 @@ int main() {
   assert.equal(room.runHistory[0].runner, "Alice");
   assert.equal(room.runHistory[0].filePath, "main.cpp");
   assert.equal(room.runHistory[0].language, "cpp");
+  assert.equal(room.runHistory[0].stdinMode, "console");
   assert.equal(room.runHistory[0].stdinContent, "2 5\n");
   assert.match(room.runHistory[0].output, /stdout:\n7/);
 });
@@ -226,7 +227,32 @@ int main() {
 
   assertSuccessfulRun(result);
   assert.match(result.stdout, /121/);
+  assert.equal(room.runHistory[0].stdinMode, "file");
   assert.equal(room.runHistory[0].stdinContent, "11\n");
+});
+
+test("compile failures store stdin snapshots", { skip: !commandExists("g++") }, async () => {
+  const room = createRoom(
+    [
+      {
+        path: "main.cpp",
+        content: "int main( { return 0; }\n",
+      },
+    ],
+    "main.cpp",
+    {
+      consoleInput: "compile stdin\n",
+      stdinMode: "console",
+    }
+  );
+
+  const { result } = await runRoom(room);
+
+  assert.notEqual(result.exitCode, 0);
+  assert.equal(room.runHistory.length, 1);
+  assert.equal(room.runHistory[0].stdinMode, "console");
+  assert.equal(room.runHistory[0].stdinContent, "compile stdin\n");
+  assert.match(room.runHistory[0].output, /\[Compile failed\]/);
 });
 
 test("keeps only the latest 50 run history records", { skip: !hasPython() }, async () => {

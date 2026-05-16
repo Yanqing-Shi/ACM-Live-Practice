@@ -12,12 +12,22 @@ export type RunnerHealthItem = {
   timedOut: boolean;
 };
 
-type CommandCheck = Omit<
+export type RunnerHealthCommand = Omit<
   RunnerHealthItem,
   "available" | "output" | "error" | "exitCode" | "timedOut"
 >;
 
-const COMMAND_CHECKS: CommandCheck[] = [
+export type RunnerHealthProbeResult = Pick<
+  RunnerHealthItem,
+  "output" | "error" | "exitCode" | "timedOut"
+>;
+
+export type RunnerHealthProbe = (
+  check: RunnerHealthCommand,
+  timeoutMs: number
+) => Promise<RunnerHealthProbeResult>;
+
+const COMMAND_CHECKS: RunnerHealthCommand[] = [
   {
     id: "cpp",
     label: "C++",
@@ -55,7 +65,7 @@ function trimOutput(value: string): string {
 }
 
 function isCommandAvailable(
-  check: CommandCheck,
+  check: RunnerHealthCommand,
   code: number | null,
   output: string,
   error: string,
@@ -70,10 +80,33 @@ function isCommandAvailable(
   return false;
 }
 
+export function createRunnerHealthItem(
+  check: RunnerHealthCommand,
+  result: RunnerHealthProbeResult
+): RunnerHealthItem {
+  const output = trimOutput(result.output);
+  const error = trimOutput(result.error);
+
+  return {
+    ...check,
+    available: isCommandAvailable(
+      check,
+      result.exitCode,
+      output,
+      error,
+      result.timedOut
+    ),
+    output,
+    error,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+  };
+}
+
 function checkCommand(
-  check: CommandCheck,
+  check: RunnerHealthCommand,
   timeoutMs: number
-): Promise<RunnerHealthItem> {
+): Promise<RunnerHealthProbeResult> {
   return new Promise((resolve) => {
     const usesWindowsBatch =
       process.platform === "win32" && check.command.endsWith(".bat");
@@ -114,8 +147,6 @@ function checkCommand(
       clearTimeout(timer);
 
       resolve({
-        ...check,
-        available: false,
         output: trimOutput(stdout),
         error: trimOutput(stderr + error.message),
         exitCode: null,
@@ -128,14 +159,9 @@ function checkCommand(
 
       finished = true;
       clearTimeout(timer);
-      const output = trimOutput(stdout || stderr);
-      const error = code === 0 ? "" : trimOutput(stderr || stdout);
-
       resolve({
-        ...check,
-        available: isCommandAvailable(check, code, output, error, timedOut),
-        output,
-        error,
+        output: stdout || stderr,
+        error: code === 0 ? "" : stderr || stdout,
         exitCode: code,
         timedOut,
       });
@@ -144,9 +170,17 @@ function checkCommand(
 }
 
 export async function checkRunnerHealth(
-  timeoutMs = 3000
+  timeoutMs = 3000,
+  probe: RunnerHealthProbe = checkCommand
 ): Promise<RunnerHealthItem[]> {
-  return Promise.all(
-    COMMAND_CHECKS.map((check) => checkCommand(check, timeoutMs))
+  const results = await Promise.all(
+    COMMAND_CHECKS.map(async (check) => ({
+      check,
+      result: await probe(check, timeoutMs),
+    }))
+  );
+
+  return results.map(({ check, result }) =>
+    createRunnerHealthItem(check, result)
   );
 }

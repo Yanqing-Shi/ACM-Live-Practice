@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { roomUriString } from "./permissionModes";
 import { RoomClient } from "./roomClient";
 import { uriToWorkspacePath } from "./roomFileSystemProvider";
 
@@ -26,5 +27,5 @@ export function workspacePathToReadonlyUri(
   roomId: string,
   path: string
 ): vscode.Uri {
-  return vscode.Uri.parse(`icpc-room-readonly://${roomId}/${encodeURI(path)}`);
+  return vscode.Uri.parse(roomUriString(roomId, path, "readonly"));
 }

@@ -9,3 +9,10 @@ function isValidUserName(userName) {
     !/[\x00-\x1F\x7F]/.test(userName)
   );
 }
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    isValidRoomId,
+    isValidUserName,
+  };
+}

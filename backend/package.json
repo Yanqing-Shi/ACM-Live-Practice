@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "test": "npm run build && node --test dist/runner.test.js dist/roomActions.test.js dist/runnerHealth.test.js dist/workspaceExport.test.js",
+    "test": "npm run build && node --test --test-concurrency=1 dist/runner.test.js dist/roomActions.test.js dist/permissions.test.js dist/stateExport.test.js dist/runnerHealth.test.js dist/workspaceExport.test.js",
     "start": "node dist/index.js"
   },
   "devDependencies": {

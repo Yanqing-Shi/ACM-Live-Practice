@@ -59,6 +59,18 @@ function sortTreeEntries(entries) {
   });
 }
 
+function getWorkspaceTreeEntries(folders, files) {
+  return sortTreeEntries(Object.entries(buildFileTree(folders, files)));
+}
+
+function shouldShowItemActions(isSelected, canControl) {
+  return Boolean(isSelected && canControl);
+}
+
+function getEmptyWorkspaceMessage() {
+  return "No files yet.";
+}
+
 function getSelectedFolderForCreation() {
   if (selectedType === "folder") {
     return selectedPath;
@@ -107,7 +119,10 @@ function renderTreeNode(name, node, depth, fullPath) {
 
     if (isSelected) {
       row.style.background = "#dbeafe";
-      actions.style.display = "flex";
+
+      if (shouldShowItemActions(isSelected, canCurrentUserControl())) {
+        actions.style.display = "flex";
+      }
     }
 
     label.onclick = () => {
@@ -161,7 +176,10 @@ function renderTreeNode(name, node, depth, fullPath) {
 
   if (isSelected) {
     row.style.background = "#dbeafe";
-    actions.style.display = "flex";
+
+    if (shouldShowItemActions(isSelected, canCurrentUserControl())) {
+      actions.style.display = "flex";
+    }
   }
 
   label.onclick = () => {
@@ -170,12 +188,17 @@ function renderTreeNode(name, node, depth, fullPath) {
     selectedPath = node.path;
     selectedType = "file";
 
-    ws.send(
-      JSON.stringify({
-        type: "switch_file",
-        path: node.path,
-      })
-    );
+    if (canCurrentUserControl()) {
+      ws.send(
+        JSON.stringify({
+          type: "switch_file",
+          path: node.path,
+        })
+      );
+    } else {
+      localViewedFilePath = node.path;
+      applyRemoteActiveFile();
+    }
 
     renderFileList();
   };
@@ -198,14 +221,13 @@ function renderTreeNode(name, node, depth, fullPath) {
 function renderFileList() {
   fileList.innerHTML = "";
 
-  const tree = buildFileTree(currentFolders, currentFiles);
-  const entries = sortTreeEntries(Object.entries(tree));
+  const entries = getWorkspaceTreeEntries(currentFolders, currentFiles);
 
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.style.color = "#666";
     empty.style.fontStyle = "italic";
-    empty.textContent = "No files yet.";
+    empty.textContent = getEmptyWorkspaceMessage();
     fileList.appendChild(empty);
     return;
   }
@@ -213,4 +235,14 @@ function renderFileList() {
   entries.forEach(([name, node]) => {
     renderTreeNode(name, node, 0, name);
   });
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    buildFileTree,
+    getEmptyWorkspaceMessage,
+    getWorkspaceTreeEntries,
+    shouldShowItemActions,
+    sortTreeEntries,
+  };
 }

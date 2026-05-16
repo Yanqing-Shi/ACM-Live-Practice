@@ -13,6 +13,7 @@ From the repo root:
 ```powershell
 cd backend
 npm.cmd install
+npm.cmd test
 npm.cmd run build
 npm.cmd start
 ```
@@ -96,3 +97,27 @@ http://localhost:3001
 ```
 
 Share the tunnel URL. Do not use this for untrusted public code execution.
+
+## Validation Before Public Sharing
+
+Run the automated checks that are visible in this repo:
+
+```powershell
+cd backend
+npm.cmd test
+```
+
+```powershell
+cd vscode-extension
+npm.cmd test
+```
+
+Compile-only extension check:
+
+```powershell
+cd vscode-extension
+npm.cmd run compile
+```
+
+The backend test script includes runner health endpoint shape checks and static
+checks for the Docker and Render deployment settings.

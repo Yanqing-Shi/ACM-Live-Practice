@@ -32,19 +32,54 @@ function applyRemoteStdinMode(stdinMode) {
   isApplyingRemoteStdinMode = false;
 }
 
-function applyRemoteActiveFile() {
-  const file = currentFiles.find((f) => f.path === activeFilePath);
+function getEditorDisplayState(files, activeFilePath, localViewedFilePath) {
+  const preferredPath = localViewedFilePath || activeFilePath || "";
+  const preferredFile = files.find((file) => file.path === preferredPath);
 
+  if (preferredFile) {
+    return {
+      path: preferredFile.path,
+      content: preferredFile.content,
+      hasFile: true,
+    };
+  }
+
+  if (localViewedFilePath && activeFilePath) {
+    const activeFile = files.find((file) => file.path === activeFilePath);
+
+    if (activeFile) {
+      return {
+        path: activeFile.path,
+        content: activeFile.content,
+        hasFile: true,
+      };
+    }
+  }
+
+  return {
+    path: "",
+    content: "No file selected. Create a file in the workspace to start.",
+    hasFile: false,
+  };
+}
+
+function applyRemoteActiveFile() {
   if (!editor) return;
+
+  const displayState = getEditorDisplayState(
+    currentFiles,
+    activeFilePath,
+    localViewedFilePath
+  );
 
   isApplyingRemoteCode = true;
 
-  if (file) {
-    if (editor.getValue() !== file.content) {
-      editor.setValue(file.content);
+  if (displayState.hasFile) {
+    if (editor.getValue() !== displayState.content) {
+      editor.setValue(displayState.content);
     }
   } else {
-    editor.setValue("No file selected. Create a file in the workspace to start.");
+    editor.setValue(displayState.content);
   }
 
   isApplyingRemoteCode = false;
@@ -60,6 +95,14 @@ function handleRoomStateMessage(message) {
   currentFiles = message.files || [];
   currentFolders = message.folders || [];
   activeFilePath = message.activeFilePath || "";
+  if (!currentFiles.some((file) => file.path === localViewedFilePath)) {
+    localViewedFilePath = "";
+  }
+
+  if (message.currentController === currentUserName) {
+    localViewedFilePath = "";
+  }
+
   currentRoomId = (message.members || []).includes(currentUserName)
     ? message.roomId
     : "";
@@ -115,6 +158,7 @@ function setupWebSocket() {
     write("Closed");
     currentRoomId = "";
     currentControllerName = "";
+    localViewedFilePath = "";
     updateActionAvailability();
 
     if (editor) {
@@ -139,4 +183,10 @@ function ensureConnected() {
   ws = new WebSocket(getBackendUrl());
   setupWebSocket();
   return false;
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    getEditorDisplayState,
+  };
 }

@@ -1,6 +1,7 @@
 import type { WebSocketServer, WebSocket } from "ws";
 import { appendAuditEvent, appendControlEvent } from "./events";
 import { loadRoomFromDisk, saveRoomToDisk } from "./persistence";
+import { validateControllerAction } from "./permissions";
 import {
   addClientToRoom,
   approveControl,
@@ -103,6 +104,28 @@ export function registerRoomWebSocket(
       roomId: meta.roomId,
       userName: meta.userName,
     };
+  }
+
+  function requireControllerForMessage(
+    socket: WebSocket,
+    context: ClientRoomContext,
+    messageType: ClientMessage["type"]
+  ): boolean {
+    const result = validateControllerAction(
+      context.room,
+      context.userName,
+      messageType
+    );
+
+    if (result.ok) {
+      return true;
+    }
+
+    sendMessage(socket, {
+      type: "error",
+      message: result.error,
+    });
+    return false;
   }
 
   function removeUserFromOtherRooms(
@@ -265,11 +288,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can run code",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -418,9 +437,11 @@ export function registerRoomWebSocket(
           const context = getClientRoom(socket);
           if (!context) return;
 
-          const { room, userName } = context;
+          const { room } = context;
 
-          if (room.currentController !== userName) return;
+          if (!requireControllerForMessage(socket, context, data.type)) {
+            return;
+          }
 
           updateActiveFileContent(room, data.content);
           broadcastRoomState(context.roomId);
@@ -431,13 +452,9 @@ export function registerRoomWebSocket(
           const context = getClientRoom(socket);
           if (!context) return;
 
-          const { room, roomId, userName } = context;
+          const { room, roomId } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can edit console input",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -452,11 +469,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can change input mode",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -476,11 +489,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can switch files",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -509,11 +518,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can create folders",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -542,11 +547,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can create files",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -575,11 +576,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can rename files or folders",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 
@@ -614,11 +611,7 @@ export function registerRoomWebSocket(
 
           const { room, roomId, userName } = context;
 
-          if (room.currentController !== userName) {
-            sendMessage(socket, {
-              type: "error",
-              message: "Only controller can delete files or folders",
-            });
+          if (!requireControllerForMessage(socket, context, data.type)) {
             return;
           }
 

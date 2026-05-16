@@ -1,5 +1,6 @@
 function renameSelectedItem(itemType, oldPath) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!canCurrentUserControl()) return;
 
   const newPath = prompt(`Rename ${oldPath} to:`, oldPath);
 
@@ -46,6 +47,7 @@ function renameSelectedItem(itemType, oldPath) {
 
 function deleteSelectedItem(itemType, targetPath) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!canCurrentUserControl()) return;
 
   const ok = confirm(
     itemType === "folder"
@@ -84,6 +86,7 @@ function deleteSelectedItem(itemType, targetPath) {
 
 function createWorkspaceFile() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!canCurrentUserControl()) return;
 
   const baseFolder = getSelectedFolderForCreation();
 
@@ -120,6 +123,7 @@ function createWorkspaceFile() {
 
 function createWorkspaceFolder() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!canCurrentUserControl()) return;
 
   const baseFolder = getSelectedFolderForCreation();
 

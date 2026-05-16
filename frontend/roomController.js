@@ -1,23 +1,64 @@
-function setButtonDisabled(id, disabled) {
-  const button = document.getElementById(id);
+function setElementDisabled(id, disabled) {
+  const element = document.getElementById(id);
 
-  if (button) {
-    button.disabled = disabled;
+  if (element) {
+    element.disabled = disabled;
   }
 }
 
-function updateActionAvailability() {
-  const joined = isJoinedRoom();
-  const canControl = joined && currentControllerName === currentUserName;
+function getActionAvailabilityState({
+  joined,
+  currentControllerName,
+  currentUserName,
+  activeFilePath,
+}) {
+  const canControl =
+    Boolean(joined) &&
+    Boolean(currentControllerName) &&
+    currentControllerName === currentUserName;
   const hasActiveFile = activeFilePath !== "";
 
-  setButtonDisabled("createRoom", joined);
-  setButtonDisabled("join", joined);
-  setButtonDisabled("leave", !joined);
-  setButtonDisabled("requestControl", !joined || canControl);
-  setButtonDisabled("runCode", !canControl || !hasActiveFile);
-  setButtonDisabled("createFile", !canControl);
-  setButtonDisabled("createFolder", !canControl);
+  return {
+    createRoomDisabled: joined,
+    joinDisabled: joined,
+    leaveDisabled: !joined,
+    requestControlDisabled: !joined || canControl,
+    runCodeDisabled: !canControl || !hasActiveFile,
+    createFileDisabled: !canControl,
+    createFolderDisabled: !canControl,
+    consoleInputDisabled: !canControl,
+    stdinModeDisabled: !canControl,
+    canControl,
+    hasActiveFile,
+  };
+}
+
+function canCurrentUserControl() {
+  return getActionAvailabilityState({
+    joined: isJoinedRoom(),
+    currentControllerName,
+    currentUserName,
+    activeFilePath,
+  }).canControl;
+}
+
+function updateActionAvailability() {
+  const availability = getActionAvailabilityState({
+    joined: isJoinedRoom(),
+    currentControllerName,
+    currentUserName,
+    activeFilePath,
+  });
+
+  setElementDisabled("createRoom", availability.createRoomDisabled);
+  setElementDisabled("join", availability.joinDisabled);
+  setElementDisabled("leave", availability.leaveDisabled);
+  setElementDisabled("requestControl", availability.requestControlDisabled);
+  setElementDisabled("runCode", availability.runCodeDisabled);
+  setElementDisabled("createFile", availability.createFileDisabled);
+  setElementDisabled("createFolder", availability.createFolderDisabled);
+  setElementDisabled("consoleInput", availability.consoleInputDisabled);
+  setElementDisabled("stdinMode", availability.stdinModeDisabled);
 }
 
 function validateRoomId(roomId) {
@@ -256,4 +297,10 @@ function joinRoom(roomId) {
     sendJoinRoom(roomId, userName);
     pendingJoin = null;
   }
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    getActionAvailabilityState,
+  };
 }

@@ -3,7 +3,8 @@ import type { RunRecord } from "./protocol";
 import { RoomClient } from "./roomClient";
 
 export type RunHistoryNode = {
-  run: RunRecord;
+  action?: "consoleInput";
+  run?: RunRecord;
 };
 
 export class RunHistoryTreeProvider
@@ -21,6 +22,28 @@ export class RunHistoryTreeProvider
   }
 
   getTreeItem(node: RunHistoryNode): vscode.TreeItem {
+    if (node.action === "consoleInput") {
+      const item = new vscode.TreeItem(
+        "Console Input",
+        vscode.TreeItemCollapsibleState.None
+      );
+      const input = this.client.state?.consoleInput;
+
+      item.description = input ? summarizeConsoleInput(input) : "empty";
+      item.iconPath = new vscode.ThemeIcon("terminal");
+      item.contextValue = "consoleInput";
+      item.command = {
+        command: "icpcLive.setConsoleInput",
+        title: "Set Console Input",
+      };
+
+      return item;
+    }
+
+    if (!node.run) {
+      return new vscode.TreeItem("", vscode.TreeItemCollapsibleState.None);
+    }
+
     const run = node.run;
     const status = run.timedOut
       ? "timeout"
@@ -44,11 +67,13 @@ export class RunHistoryTreeProvider
   }
 
   getChildren(): RunHistoryNode[] {
-    return (this.client.state?.runHistory || [])
+    const runs = (this.client.state?.runHistory || [])
       .slice()
       .reverse()
       .slice(0, 30)
       .map((run) => ({ run }));
+
+    return [{ action: "consoleInput" }, ...runs];
   }
 }
 
@@ -60,4 +85,14 @@ function formatTime(value: string): string {
   }
 
   return date.toLocaleTimeString();
+}
+
+function summarizeConsoleInput(input: string): string {
+  const singleLine = input.replace(/\s+/g, " ").trim();
+
+  if (!singleLine) {
+    return "empty";
+  }
+
+  return singleLine.length > 40 ? `${singleLine.slice(0, 37)}...` : singleLine;
 }

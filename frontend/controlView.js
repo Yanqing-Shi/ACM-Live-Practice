@@ -40,22 +40,50 @@ function renderControlRequests(requests, currentController) {
   });
 }
 
+function getEditorPermissionState({
+  currentController,
+  currentUserName,
+  activeFilePath,
+  displayedFilePath,
+}) {
+  const canEdit =
+    Boolean(currentController) &&
+    currentController === currentUserName &&
+    activeFilePath !== "";
+
+  return {
+    canEdit,
+    statusText: canEdit
+      ? "Editing status: you can edit"
+      : displayedFilePath
+        ? "Editing status: read-only"
+        : "Editing status: no file selected",
+  };
+}
+
 function updateEditorPermission(currentController) {
   controllerInfo.textContent =
     "Current controller: " + (currentController || "none");
 
-  const canEdit =
-    currentController && currentController === currentUserName && activeFilePath;
+  const displayedFilePath = localViewedFilePath || activeFilePath;
+  const permission = getEditorPermissionState({
+    currentController,
+    currentUserName,
+    activeFilePath,
+    displayedFilePath,
+  });
 
   if (editor) {
     editor.updateOptions({
-      readOnly: !canEdit,
+      readOnly: !permission.canEdit,
     });
   }
 
-  editInfo.textContent = canEdit
-    ? "Editing status: you can edit"
-    : activeFilePath
-      ? "Editing status: read-only"
-      : "Editing status: no file selected";
+  editInfo.textContent = permission.statusText;
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    getEditorPermissionState,
+  };
 }

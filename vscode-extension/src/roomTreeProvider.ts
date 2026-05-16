@@ -1,12 +1,10 @@
 import * as vscode from "vscode";
 import { RoomClient } from "./roomClient";
-import { workspacePathToUri } from "./roomFileSystemProvider";
-
-export type RoomTreeNode = {
-  name: string;
-  path: string;
-  type: "file" | "folder" | "empty";
-};
+import {
+  buildRoomTreeChildren,
+  describeRoomTreeItem,
+} from "./roomTreeModel";
+import type { RoomTreeNode } from "./roomTreeModel";
 
 export class RoomTreeProvider implements vscode.TreeDataProvider<RoomTreeNode> {
   private readonly emitter = new vscode.EventEmitter<RoomTreeNode | undefined>();
@@ -21,82 +19,27 @@ export class RoomTreeProvider implements vscode.TreeDataProvider<RoomTreeNode> {
   }
 
   getTreeItem(node: RoomTreeNode): vscode.TreeItem {
+    const descriptor = describeRoomTreeItem(node, this.client.roomId);
     const item = new vscode.TreeItem(
-      node.name,
-      node.type === "folder"
+      descriptor.label,
+      descriptor.collapsible === "collapsed"
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None
     );
 
-    item.contextValue = node.type;
-    item.resourceUri =
-      node.type === "empty"
-        ? undefined
-        : workspacePathToUri(this.client.roomId, node.path);
+    item.contextValue = descriptor.contextValue;
+    item.resourceUri = descriptor.resourceUri
+      ? vscode.Uri.parse(descriptor.resourceUri)
+      : undefined;
 
-    if (node.type === "file") {
-      item.command = {
-        command: "icpcLive.openRoomFile",
-        title: "Open Room File",
-        arguments: [node.path],
-      };
+    if (descriptor.command) {
+      item.command = descriptor.command;
     }
 
     return item;
   }
 
   getChildren(node?: RoomTreeNode): RoomTreeNode[] {
-    const state = this.client.state;
-
-    if (!state) {
-      return [];
-    }
-
-    if (!node && state.files.length === 0 && state.folders.length === 0) {
-      return [
-        {
-          name: "Workspace is empty",
-          path: "",
-          type: "empty",
-        },
-      ];
-    }
-
-    const basePath = node?.path || "";
-    const prefix = basePath ? `${basePath}/` : "";
-    const children = new Map<string, RoomTreeNode>();
-
-    for (const folder of state.folders) {
-      if (!folder.startsWith(prefix)) continue;
-      const rest = folder.slice(prefix.length);
-      const name = rest.split("/")[0];
-
-      if (name) {
-        children.set(name, {
-          name,
-          path: prefix + name,
-          type: "folder",
-        });
-      }
-    }
-
-    for (const file of state.files) {
-      if (!file.path.startsWith(prefix)) continue;
-      const rest = file.path.slice(prefix.length);
-      const name = rest.split("/")[0];
-
-      if (!name) continue;
-
-      children.set(name, {
-        name,
-        path: prefix + name,
-        type: rest.includes("/") ? "folder" : "file",
-      });
-    }
-
-    return Array.from(children.values()).sort((left, right) => {
-      if (left.type !== right.type) return left.type === "folder" ? -1 : 1;
-      return left.name.localeCompare(right.name);
-    });
+    return buildRoomTreeChildren(this.client.state, node);
   }
 }

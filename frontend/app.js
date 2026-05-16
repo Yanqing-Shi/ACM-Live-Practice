@@ -19,6 +19,7 @@ const snapshotFileInput = document.getElementById("snapshotFile");
 let currentFiles = [];
 let currentFolders = [];
 let activeFilePath = "";
+let localViewedFilePath = "";
 let selectedPath = "";
 let selectedType = ""; // "file" or "folder"
 const expandedFolders = new Set();

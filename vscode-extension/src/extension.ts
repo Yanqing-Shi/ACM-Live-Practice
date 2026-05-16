@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
+import { controlRequestNotificationDecision } from "./controlRequestNotifications";
 import { MembersTreeProvider } from "./membersTreeProvider";
+import {
+  replacementModeForControlChange,
+  roomUriStringForController,
+  WRITABLE_ROOM_SCHEME,
+} from "./permissionModes";
 import { RoomClient } from "./roomClient";
 import {
   RoomFileSystemProvider,
@@ -11,13 +17,15 @@ import {
   workspacePathToReadonlyUri,
 } from "./roomReadonlyDocumentProvider";
 import { RunHistoryNode, RunHistoryTreeProvider } from "./runHistoryTreeProvider";
-import { RoomTreeNode, RoomTreeProvider } from "./roomTreeProvider";
+import { RoomTreeProvider } from "./roomTreeProvider";
+import type { RoomTreeNode } from "./roomTreeModel";
 import { createStatusBar } from "./statusBar";
 
 const client = new RoomClient();
 const pendingDocumentSync = new Map<string, ReturnType<typeof setTimeout>>();
 let isRevertingReadonlyEdit = false;
 let lastControllerState = false;
+let lastControlRequestNotificationKey: string | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
   const workspaceTree = new RoomTreeProvider(client);
@@ -50,6 +58,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     client.onDidChangeState(() => {
       reconcileControllerDocumentMode();
+      notifyPendingControlRequest();
     }),
     vscode.commands.registerCommand("icpcLive.setServerUrl", setServerUrl),
     vscode.commands.registerCommand("icpcLive.joinRoom", joinRoom),
@@ -94,14 +103,13 @@ function reconcileControllerDocumentMode(): void {
   lastControllerState = isController;
 
   for (const editor of vscode.window.visibleTextEditors) {
-    const scheme = editor.document.uri.scheme;
+    const replacementMode = replacementModeForControlChange(
+      isController,
+      editor.document.uri.scheme
+    );
 
-    if (isController && scheme === "icpc-room-readonly") {
-      void replaceVisibleRoomDocument(editor, true);
-    }
-
-    if (!isController && scheme === "icpc-room") {
-      void replaceVisibleRoomDocument(editor, false);
+    if (replacementMode) {
+      void replaceVisibleRoomDocument(editor, replacementMode === "writable");
     }
   }
 }
@@ -124,7 +132,7 @@ async function replaceVisibleRoomDocument(
 }
 
 function syncRoomDocumentSoon(document: vscode.TextDocument): void {
-  if (document.uri.scheme !== "icpc-room") return;
+  if (document.uri.scheme !== WRITABLE_ROOM_SCHEME) return;
   if (isRevertingReadonlyEdit) return;
   if (!client.isController) {
     revertReadonlyEdit(document);
@@ -177,6 +185,46 @@ function safeSend(message: Parameters<RoomClient["send"]>[0]): void {
     client.send(message);
   } catch (error) {
     vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function notifyPendingControlRequest(): void {
+  const decision = controlRequestNotificationDecision(
+    client.state,
+    client.userName,
+    lastControlRequestNotificationKey
+  );
+
+  lastControlRequestNotificationKey = decision.nextNotificationKey;
+
+  if (!decision.requester) {
+    return;
+  }
+
+  void showControlRequestNotification(decision.requester);
+}
+
+async function showControlRequestNotification(requester: string): Promise<void> {
+  const accept = "Accept";
+  const reject = "Reject";
+  const choice = await vscode.window.showInformationMessage(
+    `${requester} requested control of this ICPC Live room.`,
+    accept,
+    reject
+  );
+
+  if (choice === accept) {
+    safeSend({
+      type: "approve_control",
+      targetUserName: requester,
+    });
+  }
+
+  if (choice === reject) {
+    safeSend({
+      type: "reject_control",
+      targetUserName: requester,
+    });
   }
 }
 
@@ -401,9 +449,9 @@ async function openRoomFile(input?: string | RoomTreeNode): Promise<void> {
   });
 
   const document = await vscode.workspace.openTextDocument(
-    client.isController
-      ? workspacePathToUri(client.roomId, targetPath)
-      : workspacePathToReadonlyUri(client.roomId, targetPath)
+    vscode.Uri.parse(
+      roomUriStringForController(client.roomId, targetPath, client.isController)
+    )
   );
   await vscode.window.showTextDocument(document);
 }
@@ -454,7 +502,7 @@ async function runCode(): Promise<void> {
   }
 
   const activeFilePath =
-    editor?.document.uri.scheme === "icpc-room"
+    editor?.document.uri.scheme === WRITABLE_ROOM_SCHEME
       ? decodeURIComponent(editor.document.uri.path.replace(/^\/+/, ""))
       : state.activeFilePath;
 
@@ -467,6 +515,8 @@ async function runCode(): Promise<void> {
     type: "run_code",
     activeFilePath,
     activeFileContent:
-      editor?.document.uri.scheme === "icpc-room" ? editor.document.getText() : undefined,
+      editor?.document.uri.scheme === WRITABLE_ROOM_SCHEME
+        ? editor.document.getText()
+        : undefined,
   });
 }

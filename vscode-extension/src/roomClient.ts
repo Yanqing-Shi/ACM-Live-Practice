@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
-import type { ClientMessage, FileItem, RoomStateMessage, ServerMessage } from "./protocol";
+import type { ClientMessage, FileItem, RoomStateMessage } from "./protocol";
+import { parseServerMessage, serverUrlToWebSocketUrl } from "./protocolHelpers";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -55,7 +56,7 @@ export class RoomClient {
     let wsUrl: string;
 
     try {
-      wsUrl = toWebSocketUrl(serverUrl);
+      wsUrl = serverUrlToWebSocketUrl(serverUrl);
     } catch {
       this.setStatus("error");
       throw new Error("Invalid ICPC Live server URL");
@@ -145,28 +146,21 @@ export class RoomClient {
   }
 
   private handleMessage(raw: string): void {
-    let message: ServerMessage;
+    const effect = parseServerMessage(raw);
 
-    try {
-      message = JSON.parse(raw) as ServerMessage;
-    } catch {
-      vscode.window.showErrorMessage("Received an invalid ICPC Live message");
+    if (effect.kind === "state") {
+      this.stateValue = effect.state;
+      this.stateEmitter.fire(effect.state);
       return;
     }
 
-    if (message.type === "room_state") {
-      this.stateValue = message;
-      this.stateEmitter.fire(message);
+    if (effect.kind === "output") {
+      this.outputEmitter.fire(effect.output);
       return;
     }
 
-    if (message.type === "run_result") {
-      this.outputEmitter.fire(message.output);
-      return;
-    }
-
-    if (message.type === "error") {
-      vscode.window.showErrorMessage(message.message);
+    if (effect.kind === "error" || effect.kind === "invalid") {
+      vscode.window.showErrorMessage(effect.message);
     }
   }
 
@@ -174,16 +168,4 @@ export class RoomClient {
     this.statusValue = status;
     this.statusEmitter.fire(status);
   }
-}
-
-function toWebSocketUrl(serverUrl: string): string {
-  const url = new URL(serverUrl);
-
-  if (url.protocol === "http:") {
-    url.protocol = "ws:";
-  } else if (url.protocol === "https:") {
-    url.protocol = "wss:";
-  }
-
-  return url.toString();
 }

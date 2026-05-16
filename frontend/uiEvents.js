@@ -68,6 +68,8 @@ function bindUiEvents() {
 
   document.getElementById("runCode").onclick = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!canCurrentUserControl()) return;
+    if (!activeFilePath) return;
 
     ws.send(
       JSON.stringify({
@@ -94,6 +96,7 @@ function bindUiEvents() {
   document.getElementById("consoleInput").addEventListener("input", () => {
     if (isApplyingRemoteConsoleInput) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!canCurrentUserControl()) return;
 
     ws.send(
       JSON.stringify({
@@ -106,6 +109,7 @@ function bindUiEvents() {
   document.getElementById("stdinMode").addEventListener("change", () => {
     if (isApplyingRemoteStdinMode) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!canCurrentUserControl()) return;
 
     ws.send(
       JSON.stringify({

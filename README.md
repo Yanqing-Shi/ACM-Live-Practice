@@ -65,12 +65,27 @@ The endpoint checks:
 
 ## Tests
 
+Backend:
+
 ```powershell
 cd backend
-npm test
+npm.cmd test
 ```
 
-This builds TypeScript and runs backend unit tests for room actions, runner behavior, and runner health.
+This builds TypeScript and runs backend unit/static tests for permissions, room actions, runner behavior, runner health endpoints, deployment config, snapshots, persistence, and workspace export.
+
+VS Code extension:
+
+```powershell
+cd vscode-extension
+npm.cmd test
+```
+
+Frontend:
+
+```powershell
+npm.cmd run test:frontend
+```
 
 ## Persistence
 
@@ -98,8 +113,9 @@ Development:
 
 ```powershell
 cd vscode-extension
-npm install
-npm run compile
+npm.cmd install
+npm.cmd run compile
+npm.cmd test
 ```
 
 Open `vscode-extension` in VS Code and press `F5` to launch an Extension Development Host.

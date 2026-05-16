@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "test:frontend": "node --test \"frontend/tests/*.test.js\""
+  },
   "dependencies": {
     "express": "^5.2.1"
   },

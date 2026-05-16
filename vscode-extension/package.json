@@ -154,17 +154,17 @@
         {
           "command": "icpcLive.runCode",
           "when": "view == icpcLive.runHistory",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "icpcLive.setConsoleInput",
           "when": "view == icpcLive.runHistory",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "icpcLive.setStdinMode",
           "when": "view == icpcLive.runHistory",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -203,6 +203,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "npm run compile && node --test out/test/*.test.js",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },

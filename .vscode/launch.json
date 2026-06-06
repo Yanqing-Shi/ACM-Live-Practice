@@ -6,12 +6,53 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension"
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension",
+        "--disable-restore-windows"
       ],
       "outFiles": [
         "${workspaceFolder}/vscode-extension/out/**/*.js"
       ],
       "preLaunchTask": "compile:vscode-extension"
+    },
+    {
+      "name": "Run ICPC Live Extension - Alice",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension",
+        "--disable-restore-windows",
+        "--user-data-dir=${workspaceFolder}/.vscode-test/alice-user-data",
+        "--extensions-dir=${workspaceFolder}/.vscode-test/alice-extensions"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/vscode-extension/out/**/*.js"
+      ],
+      "preLaunchTask": "compile:vscode-extension"
+    },
+    {
+      "name": "Run ICPC Live Extension - Bob",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension",
+        "--disable-restore-windows",
+        "--user-data-dir=${workspaceFolder}/.vscode-test/bob-user-data",
+        "--extensions-dir=${workspaceFolder}/.vscode-test/bob-extensions"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/vscode-extension/out/**/*.js"
+      ],
+      "preLaunchTask": "compile:vscode-extension"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Run ICPC Live Extension - Alice + Bob",
+      "configurations": [
+        "Run ICPC Live Extension - Alice",
+        "Run ICPC Live Extension - Bob"
+      ],
+      "stopAll": true
     }
   ]
 }

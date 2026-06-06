@@ -78,7 +78,7 @@ npm.cmd test
 Current extension test count:
 
 ```text
-19 passing tests
+25 passing tests
 ```
 
 Compile-only check:

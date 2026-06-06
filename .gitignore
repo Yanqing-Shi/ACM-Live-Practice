@@ -3,4 +3,5 @@ backend/data/
 node_modules/
 vscode-extension/out/
 vscode-extension/node_modules/
+.vscode-test/
 docs

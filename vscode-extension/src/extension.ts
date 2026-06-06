@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import { controlRequestNotificationDecision } from "./controlRequestNotifications";
+import { createRoom as createRoomOnServer } from "./createRoom";
 import { MembersTreeProvider } from "./membersTreeProvider";
 import {
+  READONLY_ROOM_SCHEME,
   replacementModeForControlChange,
   roomUriStringForController,
   WRITABLE_ROOM_SCHEME,
@@ -16,13 +18,18 @@ import {
   RoomReadonlyDocumentProvider,
   workspacePathToReadonlyUri,
 } from "./roomReadonlyDocumentProvider";
+import { RoomActionsViewProvider } from "./roomActionsViewProvider";
 import { RunHistoryNode, RunHistoryTreeProvider } from "./runHistoryTreeProvider";
 import { RoomTreeProvider } from "./roomTreeProvider";
 import type { RoomTreeNode } from "./roomTreeModel";
 import { createStatusBar } from "./statusBar";
 
 const client = new RoomClient();
-const pendingDocumentSync = new Map<string, ReturnType<typeof setTimeout>>();
+type PendingDocumentSync = {
+  document: vscode.TextDocument;
+  timer: ReturnType<typeof setTimeout>;
+};
+const pendingDocumentSync = new Map<string, PendingDocumentSync>();
 let isRevertingReadonlyEdit = false;
 let lastControllerState = false;
 let lastControlRequestNotificationKey: string | null = null;
@@ -31,6 +38,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const workspaceTree = new RoomTreeProvider(client);
   const membersTree = new MembersTreeProvider(client);
   const runHistoryTree = new RunHistoryTreeProvider(client);
+  const roomActionsView = new RoomActionsViewProvider(client);
   const fileSystemProvider = new RoomFileSystemProvider(client);
   const readonlyDocumentProvider = new RoomReadonlyDocumentProvider(client);
   const output = vscode.window.createOutputChannel("ICPC Live");
@@ -47,6 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerTreeDataProvider("icpcLive.workspace", workspaceTree),
     vscode.window.registerTreeDataProvider("icpcLive.members", membersTree),
     vscode.window.registerTreeDataProvider("icpcLive.runHistory", runHistoryTree),
+    vscode.window.registerWebviewViewProvider("icpcLive.actions", roomActionsView),
     output,
     statusBar,
     vscode.workspace.onDidChangeTextDocument((event) => {
@@ -57,11 +66,13 @@ export function activate(context: vscode.ExtensionContext): void {
       output.show(true);
     }),
     client.onDidChangeState(() => {
-      reconcileControllerDocumentMode();
+      void reconcileControllerDocumentMode();
       notifyPendingControlRequest();
     }),
     vscode.commands.registerCommand("icpcLive.setServerUrl", setServerUrl),
+    vscode.commands.registerCommand("icpcLive.createRoom", createRoom),
     vscode.commands.registerCommand("icpcLive.joinRoom", joinRoom),
+    vscode.commands.registerCommand("icpcLive.copyRoomId", copyRoomId),
     vscode.commands.registerCommand("icpcLive.leaveRoom", () => {
       client.disconnect();
       vscode.window.showInformationMessage("Left ICPC Live room");
@@ -93,7 +104,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-function reconcileControllerDocumentMode(): void {
+async function reconcileControllerDocumentMode(): Promise<void> {
   const isController = client.isController;
 
   if (isController === lastControllerState) {
@@ -101,6 +112,8 @@ function reconcileControllerDocumentMode(): void {
   }
 
   lastControllerState = isController;
+  const obsoleteScheme = isController ? READONLY_ROOM_SCHEME : WRITABLE_ROOM_SCHEME;
+  const replacements: Promise<void>[] = [];
 
   for (const editor of vscode.window.visibleTextEditors) {
     const replacementMode = replacementModeForControlChange(
@@ -109,9 +122,14 @@ function reconcileControllerDocumentMode(): void {
     );
 
     if (replacementMode) {
-      void replaceVisibleRoomDocument(editor, replacementMode === "writable");
+      replacements.push(
+        replaceVisibleRoomDocument(editor, replacementMode === "writable")
+      );
     }
   }
+
+  await Promise.all(replacements);
+  await closeRoomTabsWithScheme(obsoleteScheme);
 }
 
 async function replaceVisibleRoomDocument(
@@ -131,6 +149,32 @@ async function replaceVisibleRoomDocument(
   });
 }
 
+async function closeRoomTabsWithScheme(scheme: string): Promise<void> {
+  const tabs = vscode.window.tabGroups.all.flatMap((group) =>
+    group.tabs.filter((tab) =>
+      tabInputUris(tab.input).some(
+        (uri) => uri.scheme === scheme && uri.authority === client.roomId
+      )
+    )
+  );
+
+  if (tabs.length > 0) {
+    await vscode.window.tabGroups.close(tabs, true);
+  }
+}
+
+function tabInputUris(input: unknown): vscode.Uri[] {
+  if (input instanceof vscode.TabInputText) {
+    return [input.uri];
+  }
+
+  if (input instanceof vscode.TabInputTextDiff) {
+    return [input.original, input.modified];
+  }
+
+  return [];
+}
+
 function syncRoomDocumentSoon(document: vscode.TextDocument): void {
   if (document.uri.scheme !== WRITABLE_ROOM_SCHEME) return;
   if (isRevertingReadonlyEdit) return;
@@ -143,17 +187,67 @@ function syncRoomDocumentSoon(document: vscode.TextDocument): void {
   const existingTimer = pendingDocumentSync.get(path);
 
   if (existingTimer) {
-    clearTimeout(existingTimer);
+    clearTimeout(existingTimer.timer);
   }
 
   const timer = setTimeout(() => {
     pendingDocumentSync.delete(path);
-    client.updateFile(path, document.getText()).catch((error) => {
+    saveRoomDocument(document).catch((error) => {
       vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
     });
   }, 250);
 
-  pendingDocumentSync.set(path, timer);
+  pendingDocumentSync.set(path, { document, timer });
+}
+
+async function saveRoomDocument(document: vscode.TextDocument): Promise<void> {
+  if (!client.isController || !document.isDirty) {
+    return;
+  }
+
+  const saved = await document.save();
+
+  if (!saved) {
+    throw new Error("Could not save ICPC Live room file before syncing");
+  }
+}
+
+async function flushPendingDocumentSyncs(): Promise<boolean> {
+  const pending = Array.from(pendingDocumentSync.values());
+  pendingDocumentSync.clear();
+
+  for (const entry of pending) {
+    clearTimeout(entry.timer);
+  }
+
+  const documentsToSave = new Map<string, vscode.TextDocument>();
+
+  for (const entry of pending) {
+    documentsToSave.set(entry.document.uri.toString(), entry.document);
+  }
+
+  for (const document of vscode.workspace.textDocuments) {
+    if (
+      document.uri.scheme === WRITABLE_ROOM_SCHEME &&
+      document.uri.authority === client.roomId
+    ) {
+      documentsToSave.set(document.uri.toString(), document);
+    }
+  }
+
+  try {
+    await Promise.all(
+      Array.from(documentsToSave.values()).map((document) =>
+        saveRoomDocument(document)
+      )
+    );
+    return true;
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      error instanceof Error ? error.message : String(error)
+    );
+    return false;
+  }
 }
 
 async function revertReadonlyEdit(document: vscode.TextDocument): Promise<void> {
@@ -214,10 +308,7 @@ async function showControlRequestNotification(requester: string): Promise<void> 
   );
 
   if (choice === accept) {
-    safeSend({
-      type: "approve_control",
-      targetUserName: requester,
-    });
+    await approveControlForUser(requester);
   }
 
   if (choice === reject) {
@@ -419,13 +510,82 @@ async function joinRoom(): Promise<void> {
 
   await config.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Global);
   try {
-    await client.join(serverUrl, roomId.trim(), userName.trim());
-    vscode.window.showInformationMessage(`Joined ICPC Live room ${roomId}`);
+    const trimmedRoomId = roomId.trim();
+    await client.join(serverUrl, trimmedRoomId, userName.trim());
+    await showRoomReadyMessage(`Joined ICPC Live room ${trimmedRoomId}`, trimmedRoomId);
   } catch (error) {
     vscode.window.showErrorMessage(
       error instanceof Error ? error.message : String(error)
     );
   }
+}
+
+async function createRoom(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("icpcLive");
+  const defaultServerUrl = config.get<string>("serverUrl") || "http://localhost:3001";
+
+  const serverUrlInput = await vscode.window.showInputBox({
+    title: "ICPC Live Server URL",
+    value: defaultServerUrl,
+  });
+  if (!serverUrlInput) return;
+
+  const userNameInput = await vscode.window.showInputBox({
+    title: "User Name",
+    prompt: "Enter the display name you want in this room",
+  });
+  if (!userNameInput) return;
+
+  const serverUrl = serverUrlInput.trim();
+  const userName = userNameInput.trim();
+
+  if (!userName) {
+    vscode.window.showErrorMessage("Enter a user name before creating an ICPC Live room");
+    return;
+  }
+
+  await config.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Global);
+
+  try {
+    const room = await createRoomOnServer(serverUrl, userName);
+    await client.join(serverUrl, room.roomId, userName);
+    await showRoomReadyMessage(
+      `Created and joined ICPC Live room ${room.roomId}`,
+      room.roomId
+    );
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
+async function copyRoomId(): Promise<void> {
+  const roomId = client.roomId || client.state?.roomId || "";
+
+  if (!roomId) {
+    vscode.window.showErrorMessage("Join an ICPC Live room before copying a room ID");
+    return;
+  }
+
+  await copyRoomIdToClipboard(roomId);
+}
+
+async function showRoomReadyMessage(
+  message: string,
+  roomId: string
+): Promise<void> {
+  const copyAction = "Copy Room ID";
+  const choice = await vscode.window.showInformationMessage(message, copyAction);
+
+  if (choice === copyAction) {
+    await copyRoomIdToClipboard(roomId);
+  }
+}
+
+async function copyRoomIdToClipboard(roomId: string): Promise<void> {
+  await vscode.env.clipboard.writeText(roomId);
+  vscode.window.showInformationMessage(`Copied ICPC Live room ID ${roomId}`);
 }
 
 async function openRoomFile(input?: string | RoomTreeNode): Promise<void> {
@@ -459,6 +619,16 @@ async function openRoomFile(input?: string | RoomTreeNode): Promise<void> {
 async function approveControl(): Promise<void> {
   const target = await pickControlRequest("Approve Control Request");
   if (!target) return;
+
+  await approveControlForUser(target);
+}
+
+async function approveControlForUser(target: string): Promise<void> {
+  const synced = await flushPendingDocumentSyncs();
+
+  if (!synced) {
+    return;
+  }
 
   safeSend({
     type: "approve_control",

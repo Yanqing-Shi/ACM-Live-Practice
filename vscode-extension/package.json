@@ -11,13 +11,18 @@
     "Other"
   ],
   "activationEvents": [
+    "onCommand:icpcLive.createRoom",
     "onCommand:icpcLive.joinRoom",
+    "onCommand:icpcLive.copyRoomId",
+    "onCommand:icpcLive.leaveRoom",
+    "onCommand:icpcLive.requestControl",
     "onCommand:icpcLive.createFile",
     "onCommand:icpcLive.createFolder",
     "onCommand:icpcLive.renameItem",
     "onCommand:icpcLive.deleteItem",
     "onCommand:icpcLive.setConsoleInput",
     "onCommand:icpcLive.setStdinMode",
+    "onView:icpcLive.actions",
     "onView:icpcLive.workspace",
     "onView:icpcLive.members",
     "onView:icpcLive.runHistory"
@@ -40,9 +45,19 @@
         "title": "ICPC Live: Set Server URL"
       },
       {
+        "command": "icpcLive.createRoom",
+        "title": "ICPC Live: Create Room",
+        "icon": "$(add)"
+      },
+      {
         "command": "icpcLive.joinRoom",
         "title": "ICPC Live: Join Room",
         "icon": "$(plug)"
+      },
+      {
+        "command": "icpcLive.copyRoomId",
+        "title": "ICPC Live: Copy Room ID",
+        "icon": "$(copy)"
       },
       {
         "command": "icpcLive.leaveRoom",
@@ -121,6 +136,11 @@
     "views": {
       "icpcLive": [
         {
+          "id": "icpcLive.actions",
+          "name": "Room Actions",
+          "type": "webview"
+        },
+        {
           "id": "icpcLive.workspace",
           "name": "Workspace"
         },
@@ -137,19 +157,9 @@
     "menus": {
       "view/title": [
         {
-          "command": "icpcLive.joinRoom",
+          "command": "icpcLive.copyRoomId",
           "when": "view == icpcLive.workspace",
           "group": "navigation@1"
-        },
-        {
-          "command": "icpcLive.leaveRoom",
-          "when": "view == icpcLive.workspace",
-          "group": "navigation@2"
-        },
-        {
-          "command": "icpcLive.requestControl",
-          "when": "view == icpcLive.workspace",
-          "group": "navigation@3"
         },
         {
           "command": "icpcLive.runCode",

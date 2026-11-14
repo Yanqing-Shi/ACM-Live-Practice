@@ -1,0 +1,6 @@
+# HTTPS and WebSocket proxy for ICPC Live. Caddy obtains the certificate
+# itself; ICPC_DOMAIN must point at this server.
+{$ICPC_DOMAIN} {
+	encode gzip
+	reverse_proxy app:3001
+}

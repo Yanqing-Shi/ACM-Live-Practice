@@ -16,6 +16,10 @@ const state: RoomStateMessage = {
   stdinMode: "console",
   runHistory: [],
   controlTimeline: [],
+  memberStates: [],
+  contest: { durationMinutes: 300, startedAt: null, endedAt: null },
+  running: false,
+  serverTime: "2026-05-15T00:00:00.000Z",
 };
 
 test("room_state messages update state", () => {
@@ -38,7 +42,8 @@ test("run_result messages emit output", () => {
     })
   );
 
-  assert.deepEqual(effect, { kind: "output", output: "accepted" });
+  assert.equal(effect.kind, "run");
+  assert.equal(effect.kind === "run" ? effect.result.output : "", "accepted");
 });
 
 test("error and invalid messages become displayable errors", () => {

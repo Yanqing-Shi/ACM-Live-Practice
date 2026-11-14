@@ -1,12 +1,18 @@
 import fs from "fs";
 import path from "path";
+import { ROOM_LIMITS, workspaceSize } from "./limits";
 import type { FileItem, Room } from "./types";
+
+const MAX_WORKSPACE_PATH_LENGTH = 200;
 
 export function isValidWorkspacePath(targetPath: string): boolean {
   if (!targetPath) return false;
+  if (targetPath.length > MAX_WORKSPACE_PATH_LENGTH) return false;
   if (targetPath.includes("..")) return false;
   if (targetPath.startsWith("/") || targetPath.startsWith("\\")) return false;
   if (targetPath.includes("\\")) return false;
+  if (/[\x00-\x1F\x7F]/.test(targetPath)) return false;
+  if (targetPath.split("/").some((part) => part.trim() === "")) return false;
   return true;
 }
 
@@ -73,8 +79,13 @@ export function writeWorkspaceToDisk(runDir: string, files: FileItem[]): void {
   }
 }
 
+const MAX_SYNC_FILE_BYTES = 1024 * 1024;
+const MAX_SYNC_FILES = 200;
+const MAX_SYNC_TOTAL_BYTES = 4 * 1024 * 1024;
+const MAX_SYNC_DEPTH = 8;
+
 function shouldSyncBackFile(filePath: string, size: number): boolean {
-  if (size > 1024 * 1024) return false;
+  if (size > MAX_SYNC_FILE_BYTES) return false;
 
   const normalized = filePath.replace(/\\/g, "/");
   const baseName = path.basename(normalized).toLowerCase();
@@ -102,53 +113,186 @@ function shouldSyncBackFile(filePath: string, size: number): boolean {
   return allowedExtensions.some((ext) => normalized.endsWith(ext));
 }
 
-export function scanWorkspaceFiles(runDir: string): FileItem[] {
-  const result: FileItem[] = [];
+function decodeUtf8(buffer: Buffer): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return null;
+  }
+}
 
-  function walk(currentDir: string): void {
-    const entries = fs.readdirSync(currentDir, {
-      withFileTypes: true,
-    });
+/** Read a regular file without ever following a symlink at the final step. */
+function readRegularFile(fullPath: string, maxBytes: number): Buffer | null {
+  let fd: number | null = null;
+
+  try {
+    // O_NOFOLLOW is not available on Windows; lstat below still applies there.
+    fd = fs.openSync(
+      fullPath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)
+    );
+
+    const stat = fs.fstatSync(fd);
+
+    if (!stat.isFile() || stat.size > maxBytes) {
+      return null;
+    }
+
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+
+    while (offset < buffer.length) {
+      const read = fs.readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0) break;
+      offset += read;
+    }
+
+    return buffer.subarray(0, offset);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+export type WorkspaceScan = {
+  files: FileItem[];
+  /** True when files were left out because a size, count or depth cap was hit. */
+  skipped: boolean;
+};
+
+/**
+ * Collect text files a run left in its workspace directory.
+ *
+ * The directory was writable by untrusted code, and this function runs with
+ * the server's own access, so it must not be tricked into reading anything
+ * else: symlinks are never followed (a link to the rooms directory would
+ * otherwise leak other teams' code into this room), and everything is capped.
+ */
+export function scanWorkspace(runDir: string): WorkspaceScan {
+  const files: FileItem[] = [];
+  let totalBytes = 0;
+  let skipped = false;
+
+  function walk(currentDir: string, depth: number): void {
+    let entries: fs.Dirent[];
+
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      skipped = true;
+      return;
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
 
+      // Dirent types come from the entry itself, so a symlink reports as a
+      // symlink here and is neither descended into nor read.
       if (entry.isDirectory()) {
-        walk(fullPath);
+        if (depth >= MAX_SYNC_DEPTH) {
+          skipped = true;
+          continue;
+        }
+
+        walk(fullPath, depth + 1);
         continue;
       }
 
       if (!entry.isFile()) continue;
 
-      const stat = fs.statSync(fullPath);
       const relativePath = path.relative(runDir, fullPath).replace(/\\/g, "/");
+      let size: number;
 
-      if (!shouldSyncBackFile(relativePath, stat.size)) continue;
+      try {
+        size = fs.lstatSync(fullPath).size;
+      } catch {
+        continue;
+      }
 
-      result.push({
-        path: relativePath,
-        content: fs.readFileSync(fullPath, "utf8"),
-      });
+      if (!shouldSyncBackFile(relativePath, size)) {
+        if (size > MAX_SYNC_FILE_BYTES) skipped = true;
+        continue;
+      }
+
+      if (!isValidWorkspacePath(relativePath)) continue;
+
+      if (files.length >= MAX_SYNC_FILES || totalBytes + size > MAX_SYNC_TOTAL_BYTES) {
+        skipped = true;
+        continue;
+      }
+
+      const buffer = readRegularFile(fullPath, MAX_SYNC_FILE_BYTES);
+      const content = buffer ? decodeUtf8(buffer) : null;
+
+      if (content === null) continue;
+
+      totalBytes += buffer?.length || 0;
+      files.push({ path: relativePath, content });
     }
   }
 
-  walk(runDir);
-  return result;
+  walk(runDir, 0);
+  return { files, skipped };
 }
 
+export function scanWorkspaceFiles(runDir: string): FileItem[] {
+  return scanWorkspace(runDir).files;
+}
+
+/**
+ * Bring files a run produced or changed back into the room.
+ *
+ * `before` is the workspace as it was written for the run. Files the run left
+ * untouched are skipped, so edits made in the room while the program was
+ * running are not overwritten with the older copy. Returns how many files
+ * could not be merged because the room is at one of its limits.
+ */
 export function mergeSyncedFilesIntoRoom(
   room: Room,
-  syncedFiles: FileItem[]
-): void {
+  syncedFiles: FileItem[],
+  before?: FileItem[]
+): number {
+  const original = new Map((before || []).map((file) => [file.path, file.content]));
+  let rejected = 0;
+
   for (const syncedFile of syncedFiles) {
+    if (original.get(syncedFile.path) === syncedFile.content) continue;
+
+    if (syncedFile.content.length > ROOM_LIMITS.maxFileSize) {
+      rejected += 1;
+      continue;
+    }
+
     const existing = room.files.find((f) => f.path === syncedFile.path);
+    const growth = syncedFile.content.length - (existing?.content.length || 0);
+
+    if (
+      growth > 0 &&
+      workspaceSize(room.files) + growth > ROOM_LIMITS.maxWorkspaceSize
+    ) {
+      rejected += 1;
+      continue;
+    }
 
     if (existing) {
       existing.content = syncedFile.content;
     } else {
+      if (
+        room.files.length >= ROOM_LIMITS.maxFiles ||
+        room.folders.includes(syncedFile.path)
+      ) {
+        rejected += 1;
+        continue;
+      }
+
       room.files.push(syncedFile);
     }
 
     addParentFolders(room, syncedFile.path);
   }
+
+  return rejected;
 }

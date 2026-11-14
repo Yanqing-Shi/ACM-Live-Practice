@@ -1,7 +1,11 @@
+node_modules/
 backend/dist/
 backend/data/
-node_modules/
+web/dist/
 vscode-extension/out/
-vscode-extension/node_modules/
+vscode-extension/dist/
+*.vsix
 .vscode-test/
-docs
+test-results/
+playwright-report/
+*.tsbuildinfo

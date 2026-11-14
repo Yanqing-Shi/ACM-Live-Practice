@@ -1,0 +1,46 @@
+// Seccomp policy for contest code, in Kafel syntax (github.com/google/kafel).
+//
+// The jail already has no capabilities, no network and no host files. This
+// policy removes kernel features an ordinary contest program never needs and
+// that have a history of privilege-escalation bugs.
+//
+// NOT YET VERIFIED against a real nsjail: see docs/sandbox.md.
+
+// CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER |
+// CLONE_NEWPID | CLONE_NEWNET: the same mask Docker's default profile uses.
+#define NAMESPACE_FLAGS 0x7E020000
+
+// glibc falls back to clone() when clone3 reports "not implemented". clone3
+// passes its flags in a struct that seccomp cannot inspect.
+ERRNO(38) {
+	clone3
+}
+
+ERRNO(1) {
+	clone(flags) { (flags & NAMESPACE_FLAGS) != 0 },
+	unshare,
+	setns,
+	mount,
+	umount2,
+	pivot_root,
+	chroot,
+	ptrace,
+	process_vm_readv,
+	process_vm_writev,
+	bpf,
+	perf_event_open,
+	userfaultfd,
+	keyctl,
+	add_key,
+	request_key,
+	kexec_load,
+	init_module,
+	finit_module,
+	delete_module,
+	open_by_handle_at,
+	io_uring_setup,
+	io_uring_enter,
+	io_uring_register
+}
+
+DEFAULT ALLOW

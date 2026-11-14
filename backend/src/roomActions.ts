@@ -1,5 +1,7 @@
 import type { ClientInfo, Room } from "./types";
+import { createDefaultContest } from "./contestActions";
 import { appendAuditEvent, appendControlEvent } from "./events";
+import { ROOM_LIMITS, workspaceSize } from "./limits";
 import {
   addParentFolders,
   chooseNextActiveFile,
@@ -18,6 +20,7 @@ export type ActionResult = {
 export function createDefaultRoom(): Room {
   return {
     clients: [],
+    members: [],
     currentController: null,
     controlRequests: [],
     folders: [],
@@ -28,6 +31,7 @@ export function createDefaultRoom(): Room {
     runHistory: [],
     controlTimeline: [],
     auditEvents: [],
+    contest: createDefaultContest(),
   };
 }
 
@@ -115,6 +119,75 @@ export function removeClientFromRoomState(
     newController,
     controllerChanged,
   };
+}
+
+/**
+ * Remove a dropped connection without touching control. The caller decides
+ * when (or whether) control moves, so a short network blip does not reshuffle
+ * the keyboard. Use `removeClientFromRoomState` for an explicit leave.
+ */
+export function detachClient(
+  room: Room,
+  client: ClientInfo
+): { removedUserName: string; roomEmpty: boolean; wasController: boolean } {
+  const removedUserName = client.userName;
+
+  room.clients = room.clients.filter(
+    (existingClient) => existingClient.socket !== client.socket
+  );
+  room.controlRequests = room.controlRequests.filter(
+    (name) => name !== removedUserName
+  );
+  appendAuditEvent(room, {
+    action: "member_left",
+    actor: removedUserName,
+    detail: "disconnected",
+  });
+
+  return {
+    removedUserName,
+    roomEmpty: room.clients.length === 0,
+    wasController: room.currentController === removedUserName,
+  };
+}
+
+/** Move control away from a controller that is no longer connected. */
+export function transferControlFromAbsentController(
+  room: Room,
+  note = "Previous controller disconnected"
+): { controllerChanged: boolean; newController: string | null } {
+  const previousController = room.currentController;
+
+  if (
+    previousController === null ||
+    room.clients.some((client) => client.userName === previousController)
+  ) {
+    return { controllerChanged: false, newController: previousController };
+  }
+
+  const newController =
+    room.clients.length > 0 ? room.clients[0].userName : null;
+
+  room.currentController = newController;
+  room.controlRequests = room.controlRequests.filter(
+    (name) => name !== newController
+  );
+  appendControlEvent(room, {
+    type: "auto_transferred",
+    actor: "system",
+    targetUserName: newController || undefined,
+    previousController,
+    nextController: newController,
+    note,
+  });
+  appendAuditEvent(room, {
+    action: "control_auto_transferred",
+    actor: "system",
+    target: newController || undefined,
+    detail: `Previous controller ${previousController} is gone`,
+  });
+
+  return { controllerChanged: true, newController };
 }
 
 export function requestControl(room: Room, userName: string): ActionResult {
@@ -231,21 +304,52 @@ export function rejectControl(
   return { ok: true };
 }
 
-export function updateActiveFileContent(
+export function updateFileContent(
   room: Room,
+  targetPath: string,
   content: string
 ): ActionResult {
-  const file = room.files.find((f) => f.path === room.activeFilePath);
+  const file = room.files.find((f) => f.path === targetPath);
 
   if (!file) {
     return {
       ok: false,
-      error: "Active file not found",
+      error:
+        targetPath === room.activeFilePath
+          ? "Active file not found"
+          : `File "${targetPath}" not found`,
+    };
+  }
+
+  if (content.length > ROOM_LIMITS.maxFileSize) {
+    return {
+      ok: false,
+      error: `File is too large (limit ${ROOM_LIMITS.maxFileSize} characters)`,
+    };
+  }
+
+  const nextWorkspaceSize =
+    workspaceSize(room.files) - file.content.length + content.length;
+
+  if (
+    nextWorkspaceSize > ROOM_LIMITS.maxWorkspaceSize &&
+    content.length > file.content.length
+  ) {
+    return {
+      ok: false,
+      error: "Workspace is full. Delete some files first.",
     };
   }
 
   file.content = content;
   return { ok: true };
+}
+
+export function updateActiveFileContent(
+  room: Room,
+  content: string
+): ActionResult {
+  return updateFileContent(room, room.activeFilePath, content);
 }
 
 export function switchActiveFile(room: Room, targetPath: string): ActionResult {
@@ -269,6 +373,16 @@ export function createFolder(room: Room, rawPath: string): ActionResult {
     return {
       ok: false,
       error: "Invalid folder path",
+    };
+  }
+
+  if (
+    !room.folders.includes(folderPath) &&
+    room.folders.length >= ROOM_LIMITS.maxFolders
+  ) {
+    return {
+      ok: false,
+      error: `Too many folders (limit ${ROOM_LIMITS.maxFolders})`,
     };
   }
 
@@ -296,7 +410,11 @@ export function createFolder(room: Room, rawPath: string): ActionResult {
   return { ok: true };
 }
 
-export function createFile(room: Room, rawPath: string): ActionResult {
+export function createFile(
+  room: Room,
+  rawPath: string,
+  content = ""
+): ActionResult {
   const newPath = rawPath.trim();
 
   if (!newPath) {
@@ -322,11 +440,39 @@ export function createFile(room: Room, rawPath: string): ActionResult {
     };
   }
 
+  if (room.folders.includes(newPath)) {
+    return {
+      ok: false,
+      error: `A folder named "${newPath}" already exists`,
+    };
+  }
+
+  if (room.files.length >= ROOM_LIMITS.maxFiles) {
+    return {
+      ok: false,
+      error: `Too many files (limit ${ROOM_LIMITS.maxFiles})`,
+    };
+  }
+
+  if (content.length > ROOM_LIMITS.maxFileSize) {
+    return {
+      ok: false,
+      error: `File is too large (limit ${ROOM_LIMITS.maxFileSize} characters)`,
+    };
+  }
+
+  if (workspaceSize(room.files) + content.length > ROOM_LIMITS.maxWorkspaceSize) {
+    return {
+      ok: false,
+      error: "Workspace is full. Delete some files first.",
+    };
+  }
+
   addParentFolders(room, newPath);
 
   room.files.push({
     path: newPath,
-    content: "",
+    content,
   });
 
   room.activeFilePath = newPath;

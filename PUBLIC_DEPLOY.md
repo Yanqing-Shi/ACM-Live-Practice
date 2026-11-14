@@ -1,123 +1,85 @@
-# Public Deployment
+# Deploying ICPC Live
 
-This repo can run as one public Node service: Express serves the frontend files, HTTP APIs, and WebSocket room traffic from the same origin.
+ICPC Live runs as one container: the server, the web app, and the sandbox that executes submitted code.
 
-## Important Safety Note
+## Read this first
 
-The runner executes user-submitted code. Do not run this as an open public service for untrusted users without sandboxing. The included Dockerfile installs compilers/interpreters for convenience, but it is not a contest-grade isolation boundary. For real public usage, add a separate Docker/firecracker runner, CPU/memory/file limits, authentication, and abuse controls.
+**The sandbox has not been run yet.** The executor, the nsjail configuration, the seccomp policy, and the container entrypoint are written and unit-tested, but they were developed on a machine without Docker. Until the checklist in [docs/sandbox.md](./docs/sandbox.md) passes on your host, treat the deployment as unsandboxed and only share it with people you trust.
 
-## Local Production Check
+Submitted code is arbitrary code. Even with the sandbox working, it shares the host's kernel, so:
 
-From the repo root:
+- run it on a machine that holds nothing else you care about, or accept that risk on your own PC for people you know;
+- keep the host's kernel updated;
+- keep backups of the data volume somewhere else.
 
-```powershell
-cd backend
-npm.cmd install
-npm.cmd test
-npm.cmd run build
-npm.cmd start
+## What the host needs
+
+- Linux with cgroup v2 (any current distribution; WSL2 works) and Docker with Compose.
+- Permission to run a **privileged** container. nsjail creates namespaces and cgroups, which Docker's default profile forbids. Platforms that do not allow privileged containers (Render's Docker services, for example) cannot run the sandbox.
+- About 2 GB of free memory for the default limits (two concurrent runs of 256 MB plus compilers).
+
+## Start it
+
+```sh
+docker compose -f deploy/compose.yaml up -d --build
 ```
 
-Then open:
+The app listens on `127.0.0.1:3001` only. Check it:
 
-```text
-http://localhost:3001
+```sh
+curl http://127.0.0.1:3001/health
+curl http://127.0.0.1:3001/health/runners     # "executor": { "mode": "nsjail", "sandboxed": true }
 ```
 
-Health endpoints:
+Then run the sandbox checklist in [docs/sandbox.md](./docs/sandbox.md).
 
-```text
-http://localhost:3001/health
-http://localhost:3001/health/runners
+Settings go in a `deploy/.env` file or the shell environment: `ADMIN_TOKEN`, `RUN_MAX_CONCURRENT`, `RUN_TIME_LIMIT_MS`, `RUN_MEMORY_LIMIT_MB`, `ICPC_MEM_LIMIT` (container memory, default `3g`), and `KOTLIN_VERSION` plus `ENABLE_KOTLIN=1` to include Kotlin.
+
+## Make it reachable
+
+### Free: your own PC and a tunnel
+
+This costs nothing and suits practice sessions, since the server only needs to be up while your team is practising.
+
+```sh
+# No account needed. The URL changes every time it starts.
+cloudflared tunnel --url http://127.0.0.1:3001
 ```
 
-## Docker
+Share the printed `https://….trycloudflare.com` URL. Teammates open it, enter a name, and join with the team code.
 
-Build from the repo root:
+For a link that stays the same, Tailscale Funnel on a free personal account is an alternative:
 
-```powershell
-docker build -t icpc-live .
+```sh
+tailscale funnel 3001
 ```
 
-Run:
+Neither tunnel has been tested with this app yet. Both carry WebSockets in principle; confirm with a three-person session before relying on one.
 
-```powershell
-docker run --rm -p 3001:3001 -v icpc-live-data:/app/backend/data icpc-live
+### A server with a domain
+
+On a VPS, the bundled Caddy obtains a certificate and proxies HTTPS and WebSockets:
+
+```sh
+ICPC_DOMAIN=live.example.com docker compose -f deploy/compose.yaml --profile public up -d --build
 ```
 
-Open:
+Point the domain's DNS at the server and open ports 80 and 443. Any KVM-based VPS running a current Debian with Docker should work. Fly.io Machines reportedly lack full cgroup v2 support and would need a different sandbox setup.
 
-```text
-http://localhost:3001
+## Data and backups
+
+Rooms are JSON files in the `icpc-data` volume (`/app/backend/data/rooms`). Session tokens are stored only as hashes. Rooms nobody has touched for 30 days are deleted.
+
+```sh
+docker compose -f deploy/compose.yaml exec app tar -C /app/backend -czf - data > icpc-backup.tgz
 ```
 
-The Docker image includes C/C++, Python 3, and Java runners. Kotlin may show unavailable in `/health/runners` unless you extend the image with `kotlinc`.
+## Running without the sandbox
 
-## Render / Railway Style Hosting
+For a private server where every user is trusted, the sandbox can be switched off explicitly:
 
-Use a Web Service, not a static-only deployment, because the app needs WebSockets and backend room state.
-
-## Render Blueprint
-
-This repo includes `render.yaml`. After pushing the repo to GitHub:
-
-1. In Render, choose **New > Blueprint**.
-2. Connect this repository.
-3. Render will create a Docker Web Service named `icpc-live`.
-4. It will mount a persistent disk at `/app/backend/data`.
-5. After deploy, share the generated `https://...onrender.com` URL.
-
-That URL is the whole app. Teammates do not need to run anything locally.
-
-Recommended settings:
-
-```text
-Runtime: Docker
-Port: use the platform-provided PORT env var
-Persistent disk / volume: mount to /app/backend/data
-Health check path: /health
+```sh
+RUNNER_MODE=direct RUNNER_ALLOW_UNSANDBOXED=1 NODE_ENV=production npm start
 ```
 
-After deploy, open the service URL. The frontend automatically uses the same host for HTTPS and WebSocket traffic, so public connections use `wss://...`.
-
-## Temporary Public Testing
-
-For a short demo from your own machine, run the backend locally and expose port `3001` with a tunnel such as Cloudflare Tunnel or ngrok:
-
-```powershell
-cd backend
-npm.cmd run build
-npm.cmd start
-```
-
-Then point the tunnel at:
-
-```text
-http://localhost:3001
-```
-
-Share the tunnel URL. Do not use this for untrusted public code execution.
-
-## Validation Before Public Sharing
-
-Run the automated checks that are visible in this repo:
-
-```powershell
-cd backend
-npm.cmd test
-```
-
-```powershell
-cd vscode-extension
-npm.cmd test
-```
-
-Compile-only extension check:
-
-```powershell
-cd vscode-extension
-npm.cmd run compile
-```
-
-The backend test script includes runner health endpoint shape checks and static
-checks for the Docker and Render deployment settings.
+Code then runs with the server's own privileges and can read every room. Without `RUNNER_ALLOW_UNSANDBOXED=1` the server refuses to start in this configuration.

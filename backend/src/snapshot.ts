@@ -1,3 +1,6 @@
+import { sanitizeContest } from "./contestActions";
+import { ROOM_LIMITS, workspaceSize } from "./limits";
+import { sanitizeRunExtras } from "./persistence";
 import type { FileItem, Room, RunRecord } from "./types";
 import {
   addParentFolders,
@@ -20,6 +23,7 @@ export function buildRoomSnapshot(roomId: string, room: Room) {
     stdinMode: room.stdinMode,
     runHistory: room.runHistory,
     controlTimeline: room.controlTimeline,
+    contest: room.contest,
   };
 }
 
@@ -32,6 +36,10 @@ function readStringArray(value: unknown): string[] {
 function sanitizeSnapshotFiles(value: unknown): FileItem[] {
   if (!Array.isArray(value)) {
     throw new Error("Snapshot files must be an array");
+  }
+
+  if (value.length > ROOM_LIMITS.maxFiles) {
+    throw new Error(`Snapshot has too many files (limit ${ROOM_LIMITS.maxFiles})`);
   }
 
   const files: FileItem[] = [];
@@ -56,11 +64,19 @@ function sanitizeSnapshotFiles(value: unknown): FileItem[] {
       throw new Error(`Duplicate snapshot file path: ${filePath}`);
     }
 
+    if (item.content.length > ROOM_LIMITS.maxFileSize) {
+      throw new Error(`Snapshot file is too large: ${filePath}`);
+    }
+
     seenPaths.add(filePath);
     files.push({
       path: filePath,
       content: item.content,
     });
+  }
+
+  if (workspaceSize(files) > ROOM_LIMITS.maxWorkspaceSize) {
+    throw new Error("Snapshot workspace is too large");
   }
 
   return files;
@@ -78,6 +94,7 @@ function sanitizeSnapshotFolders(
 
     if (!isValidWorkspacePath(folderPath)) continue;
     if (filePaths.has(folderPath)) continue;
+    if (folders.size >= ROOM_LIMITS.maxFolders) break;
 
     folders.add(folderPath);
   }
@@ -121,6 +138,7 @@ function sanitizeRunHistory(value: unknown): Room["runHistory"] {
       stdinMode: item.stdinMode === "file" ? "file" : "console",
       stdinContent:
         typeof item.stdinContent === "string" ? item.stdinContent : "",
+      ...sanitizeRunExtras(item),
     }))
     .slice(-50);
 }
@@ -150,6 +168,9 @@ export function restoreRoomFromSnapshot(room: Room, snapshot: unknown): void {
   room.consoleInput =
     typeof snapshot.consoleInput === "string" ? snapshot.consoleInput : "";
   room.stdinMode = snapshot.stdinMode === "file" ? "file" : "console";
+  if (snapshot.contest !== undefined) {
+    room.contest = sanitizeContest(snapshot.contest);
+  }
   room.runHistory = sanitizeRunHistory(snapshot.runHistory);
   room.controlTimeline = Array.isArray(snapshot.controlTimeline)
     ? (snapshot.controlTimeline.slice(-100) as Room["controlTimeline"])

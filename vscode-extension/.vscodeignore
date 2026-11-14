@@ -1,5 +1,9 @@
-node_modules
-src
-.vscode
+.vscode/**
+.vscode-test/**
+src/**
+out/**
+node_modules/**
+esbuild.mjs
 tsconfig.json
-*.map
+*.vsix
+**/*.map

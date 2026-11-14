@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install workspace dependencies
+        run: npm ci
+      - name: Install extension dependencies
+        run: npm ci --prefix vscode-extension
+      # Backend (node:test), web app (type check + Vitest), VS Code extension.
+      - name: Test
+        run: npm test
+
+  e2e:
+    name: End-to-end (three browsers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # Builds the server and web app, then drives them with real browsers.
+      # Code runs with RUNNER_MODE=direct here; the sandbox itself is covered
+      # by backend/src/sandbox/sandbox.integration.test.ts inside the container.
+      - name: Run end-to-end test
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results
+          retention-days: 7
+
+  vscode:
+    name: VS Code extension in a real VS Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix vscode-extension
+      # The test starts the real server, so it needs the backend built.
+      - run: npm run build -w backend
+      # Downloads VS Code, opens a room as its folder and drives the Explorer,
+      # editors and commands. Runs under xvfb, so no display is needed.
+      - name: Run the extension inside VS Code
+        run: npm --prefix vscode-extension run test:vscode

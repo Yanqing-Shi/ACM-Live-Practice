@@ -1,23 +1,22 @@
 {
   "name": "backend",
   "version": "1.0.0",
+  "private": true,
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "test": "npm run build && node --test --test-concurrency=1 dist/runner.test.js dist/roomActions.test.js dist/permissions.test.js dist/stateExport.test.js dist/runnerHealth.test.js dist/workspaceExport.test.js",
+    "test": "npm run build && node --test --test-concurrency=1 \"dist/**/*.test.js\"",
     "start": "node dist/index.js"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.6.2",
     "@types/ws": "^8.18.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@types/express": "^5.0.6",
-    "cors": "^2.8.6",
     "express": "^5.2.1",
     "ws": "^8.20.0"
   }

@@ -13,7 +13,8 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"]],
+  // On GitHub, failures are also reported as annotations on the run.
+  reporter: process.env.GITHUB_ACTIONS ? [["list"], ["github"]] : [["list"]],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",

@@ -633,12 +633,20 @@ test("room listing and deletion exist only for the admin token", async () => {
     );
 
     await alice.client.close();
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
-    assert.equal(
-      (await fetch(`${baseUrl}/rooms/${roomId}`, { method: "DELETE", headers: admin })).status,
-      200
-    );
+    // The server notices the closed connection a moment later; on a busy
+    // machine a fixed pause is not enough, so ask until the room is offline.
+    let status = 0;
+
+    for (let attempt = 0; attempt < 100 && status !== 200; attempt++) {
+      status = (
+        await fetch(`${baseUrl}/rooms/${roomId}`, { method: "DELETE", headers: admin })
+      ).status;
+
+      if (status !== 200) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    assert.equal(status, 200);
   });
 });
 

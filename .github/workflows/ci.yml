@@ -21,7 +21,14 @@ jobs:
         run: npm ci --prefix vscode-extension
       # Backend (node:test), web app (type check + Vitest), VS Code extension.
       - name: Test
-        run: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log
+      # Puts each failing test's name and error on the run and pull request
+      # pages as an annotation, so the cause is visible without the full log.
+      - name: Report failing tests
+        if: failure()
+        run: node .github/scripts/report-failures.mjs test-output.log
 
   e2e:
     name: End-to-end (three browsers)

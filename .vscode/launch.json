@@ -10,7 +10,7 @@
         "--disable-restore-windows"
       ],
       "outFiles": [
-        "${workspaceFolder}/vscode-extension/out/**/*.js"
+        "${workspaceFolder}/vscode-extension/dist/**/*.js"
       ],
       "preLaunchTask": "compile:vscode-extension"
     },
@@ -25,7 +25,7 @@
         "--extensions-dir=${workspaceFolder}/.vscode-test/alice-extensions"
       ],
       "outFiles": [
-        "${workspaceFolder}/vscode-extension/out/**/*.js"
+        "${workspaceFolder}/vscode-extension/dist/**/*.js"
       ],
       "preLaunchTask": "compile:vscode-extension"
     },
@@ -40,7 +40,7 @@
         "--extensions-dir=${workspaceFolder}/.vscode-test/bob-extensions"
       ],
       "outFiles": [
-        "${workspaceFolder}/vscode-extension/out/**/*.js"
+        "${workspaceFolder}/vscode-extension/dist/**/*.js"
       ],
       "preLaunchTask": "compile:vscode-extension"
     }

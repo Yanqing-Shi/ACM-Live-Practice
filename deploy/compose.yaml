@@ -1,0 +1,73 @@
+# ICPC Live: one container for the server, web app and sandboxed runner.
+#
+#   docker compose -f deploy/compose.yaml up -d --build
+#
+# The app listens on 127.0.0.1:3001 only. Put something in front of it:
+#   - on your own PC: a tunnel (see PUBLIC_DEPLOY.md), or
+#   - on a server with a domain: the bundled Caddy, with
+#       ICPC_DOMAIN=live.example.com docker compose -f deploy/compose.yaml --profile public up -d --build
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        KOTLIN_VERSION: ${KOTLIN_VERSION:-}
+    restart: unless-stopped
+    # Required by the sandbox: nsjail creates namespaces and cgroups, which
+    # Docker's default seccomp and capability set forbid. The server process
+    # itself drops all privileges in the entrypoint.
+    privileged: true
+    cgroup: private
+    environment:
+      NODE_ENV: production
+      RUNNER_MODE: nsjail
+      # The tunnel or Caddy in front is the only client, so rate limits must
+      # use the forwarded address.
+      TRUST_PROXY: "1"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ENABLE_KOTLIN: ${ENABLE_KOTLIN:-}
+      RUN_MAX_CONCURRENT: ${RUN_MAX_CONCURRENT:-2}
+      RUN_TIME_LIMIT_MS: ${RUN_TIME_LIMIT_MS:-3000}
+      RUN_MEMORY_LIMIT_MB: ${RUN_MEMORY_LIMIT_MB:-256}
+    # Per-run scratch space. `exec` matters: compiled programs run from here
+    # and Docker mounts tmpfs noexec by default.
+    tmpfs:
+      - /run/icpc:exec,size=512m
+    volumes:
+      - icpc-data:/app/backend/data
+    mem_limit: ${ICPC_MEM_LIMIT:-3g}
+    pids_limit: 1024
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    profiles: ["public"]
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      ICPC_DOMAIN: ${ICPC_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  icpc-data:
+  caddy-data:
+  caddy-config:

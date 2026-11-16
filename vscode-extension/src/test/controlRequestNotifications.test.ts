@@ -16,6 +16,10 @@ const baseState: RoomStateMessage = {
   stdinMode: "console",
   runHistory: [],
   controlTimeline: [],
+  memberStates: [],
+  contest: { durationMinutes: 300, startedAt: null, endedAt: null },
+  running: false,
+  serverTime: "2026-05-15T00:00:00.000Z",
 };
 
 test("notifies the current controller about the first pending requester", () => {

@@ -1,4 +1,5 @@
 import assert from "assert/strict";
+import { createDefaultRoom } from "./roomActions";
 import { spawnSync } from "child_process";
 import test from "node:test";
 import { runCodeInRoom } from "./runner";
@@ -23,6 +24,7 @@ function createRoom(
   options: Partial<Pick<Room, "consoleInput" | "stdinMode">> = {}
 ): Room {
   return {
+    ...createDefaultRoom(),
     clients: [],
     currentController: "Alice",
     controlRequests: [],

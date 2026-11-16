@@ -1,11 +1,22 @@
 {
+  "name": "icpc-live",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "web"
+  ],
   "scripts": {
-    "test:frontend": "node --test \"frontend/tests/*.test.js\""
-  },
-  "dependencies": {
-    "express": "^5.2.1"
+    "dev": "npm run dev -w backend",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w backend && npm run build -w web",
+    "start": "npm start -w backend",
+    "test": "npm test -w backend && npm test -w web && npm run test:extension",
+    "test:extension": "npm --prefix vscode-extension test",
+    "test:e2e": "npm run build && playwright test",
+    "test:vscode": "npm run build -w backend && npm --prefix vscode-extension run test:vscode",
+    "package:extension": "npm --prefix vscode-extension run package"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6"
+    "@playwright/test": "^1.65.1"
   }
 }

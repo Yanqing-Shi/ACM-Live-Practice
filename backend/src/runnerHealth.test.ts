@@ -166,25 +166,49 @@ test("health endpoints return expected response shapes", async () => {
   });
 });
 
-test("deployment config keeps Render health and persistent data settings", () => {
-  const renderConfig = repoFile("render.yaml");
+test("deployment files keep the sandbox, health check and persistent data wired up", () => {
+  const compose = repoFile("deploy/compose.yaml");
+  const caddyfile = repoFile("deploy/Caddyfile");
   const dockerfile = repoFile("Dockerfile");
   const dockerignore = repoFile(".dockerignore");
+  const entrypoint = repoFile("backend/sandbox/entrypoint.sh");
+  const nsjailConfig = repoFile("backend/sandbox/nsjail.cfg");
 
-  assert.match(renderConfig, /runtime:\s+docker/);
-  assert.match(renderConfig, /healthCheckPath:\s+\/health/);
-  assert.match(renderConfig, /mountPath:\s+\/app\/backend\/data/);
-  assert.match(renderConfig, /key:\s+NODE_ENV\s+value:\s+production/s);
+  // The sandbox cannot create namespaces or cgroups without these.
+  assert.match(compose, /privileged:\s+true/);
+  assert.match(compose, /cgroup:\s+private/);
+  assert.match(compose, /RUNNER_MODE:\s+nsjail/);
+  assert.match(compose, /NODE_ENV:\s+production/);
+  // Compiled programs run from the scratch tmpfs, so it must allow exec.
+  assert.match(compose, /\/run\/icpc:exec/);
+  assert.match(compose, /icpc-data:\/app\/backend\/data/);
+  assert.match(compose, /\/health/);
+  // Never published on all interfaces: a tunnel or Caddy sits in front.
+  assert.match(compose, /"127\.0\.0\.1:3001:3001"/);
+  assert.match(caddyfile, /reverse_proxy app:3001/);
 
   assert.match(dockerfile, /FROM node:22-bookworm-slim AS build/);
   assert.match(dockerfile, /build-essential/);
   assert.match(dockerfile, /openjdk-17-jdk-headless/);
   assert.match(dockerfile, /python3/);
+  assert.match(dockerfile, /github\.com\/google\/nsjail/);
+  assert.match(dockerfile, /COPY --from=nsjail \/nsjail\/nsjail \/usr\/local\/bin\/nsjail/);
   assert.match(dockerfile, /COPY --from=build \/app\/backend\/dist \.\/dist/);
-  assert.match(dockerfile, /COPY frontend \/app\/frontend/);
-  assert.match(dockerfile, /RUN mkdir -p data\/rooms/);
+  assert.match(dockerfile, /COPY --from=build \/app\/web\/dist \/app\/web\/dist/);
+  assert.match(dockerfile, /ENV RUNNER_MODE=nsjail/);
   assert.match(dockerfile, /EXPOSE 3001/);
+  assert.match(dockerfile, /ENTRYPOINT \["\/app\/sandbox\/entrypoint\.sh"\]/);
   assert.match(dockerfile, /CMD \["node", "dist\/index\.js"\]/);
+
+  // The server must not keep running as root after cgroup setup.
+  assert.match(entrypoint, /exec setpriv/);
+  assert.match(entrypoint, /--bounding-set=-all/);
+
+  // The jail must never see the server's files or environment.
+  assert.match(nsjailConfig, /keep_env:\s+false/);
+  assert.match(nsjailConfig, /clone_newnet:\s+true/);
+  assert.doesNotMatch(nsjailConfig, /"\/app/);
+  assert.doesNotMatch(nsjailConfig, /^chroot/m);
 
   assert.match(dockerignore, /\*\*\/node_modules/);
   assert.match(dockerignore, /\*\*\/dist/);

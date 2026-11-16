@@ -1,99 +1,55 @@
-# ICPC Live Project Status And Updates
+# ICPC Live: project status
 
-Last updated: 2026-05-15
+Last updated: 2026-11-14
 
-This file is now the project status index. Detailed status has been split into
-agent-ready module briefs under `docs/agent-modules/`.
+## Where things stand
 
-Use this file to decide which module a future sub-agent should own. Use the
-module files as the handoff context for implementation, testing, or review.
+The project was restarted in November 2026 to turn the May prototype into something a team can use: open a URL, enter a team code, start a contest. The web app is the primary client.
 
-## Product Snapshot
+| Area | State |
+| --- | --- |
+| Team codes and session tokens | Done. Names cannot be taken over; a refresh or reconnect resumes the seat. |
+| Server lock-down | Done. HTTP export needs a member token, import needs the controller, listing and deletion need an admin token; messages are validated and size-capped; joins and room creation are rate limited. |
+| Sync protocol | Done. Edits go to other members only, with per-connection acknowledgements so the typist's text is never rolled back. |
+| Web app | Done. React + Vite, replaces the old `frontend/` test page. Files and folders are created and renamed inline in the tree. |
+| Contest clock | Done. Any length from 1 minute to 30 days; any member can set, start, end and reset it. |
+| Runner | Reworked behind an executor interface with output caps, a run queue, and verdicts. |
+| Sandbox (nsjail) | **Written, not yet run.** See below. |
+| Deployment | Docker Compose + Caddy files written. **Never built.** |
+| VS Code extension | Rebuilt (0.2.0): the room opens as the window's folder in the Explorer. Tested automatically inside a real VS Code on Linux. Packaged as a `.vsix`; not on the Marketplace. |
 
-ICPC Live is a Web MVP plus an early VS Code extension MVP for remote
-ICPC/UCup-style team practice.
+## Not verified yet
 
-The core rule is backend-enforced:
+These are the things to check before relying on them:
 
-- One active controller per room.
-- Only the controller can edit, create, rename, delete, change stdin mode/input,
-  or run code.
-- Non-controllers can observe, open files read-only, view members, view run
-  history, and request control.
+1. **The sandbox and the Docker image.** Docker was not available where this was built. Follow the checklist in [docs/sandbox.md](./docs/sandbox.md). Until it passes, code execution is effectively unsandboxed.
+2. **Parts of the VS Code extension.** File operations, typing, hand-over, Run and Join Room are tested inside VS Code 1.146 on Linux. Not covered: the input prompts and menus, Windows and macOS, VS Code connected to WSL or SSH, and the installed `.vsix` outside a development host.
+3. **Tunnels.** Cloudflare Quick Tunnel and Tailscale Funnel are documented as free hosting options but have not been tried with this app.
+4. **Java and Kotlin runs.** Their tests are skipped on machines without `javac` / `kotlinc`, including the one this was built on.
+5. **CI.** `.github/workflows/ci.yml` has not run on GitHub yet.
 
-## Agent Module Map
+## Decisions on record
 
-| Module | Brief | Suggested owner |
-| --- | --- | --- |
-| Product and permissions | `docs/agent-modules/product-and-permissions.md` | Product rules, room roles, controller semantics |
-| Web workspace | `docs/agent-modules/web-workspace.md` | Frontend room UI, empty workspace behavior, browser client |
-| Backend state and export | `docs/agent-modules/backend-state-and-export.md` | Room state, persistence, snapshots, ZIP export, run history |
-| Audit policy | `docs/agent-modules/audit-policy.md` | Audit surface constraints and startup cleanup |
-| Deployment and operations | `docs/agent-modules/deployment-and-ops.md` | Docker, Render, health checks, public service notes |
-| VS Code extension | `docs/agent-modules/vscode-extension.md` | Extension features, permissions, UI layout, manual test flow |
-| Validation | `docs/agent-modules/validation.md` | Current checks and expected commands |
+- Web first, then the VS Code extension as an equal client (rebuilt 2026-11-14). Members can mix both in one room.
+- In VS Code the room is the window's folder, served by a file system provider, so the Explorer is VS Code's own. Code still runs on the server.
+- No accounts: a team code plus a per-seat token issued by the server.
+- Problems and judging stay on the external judge. The app times a contest; it knows nothing about problems and does not judge.
+- No problem board. A list of problems with status and assignees was built and then removed (2026-11-14): without importing a contest it was a template to fill in by hand, and the team only needs an empty workspace. Rooms saved with a board still load; the board is dropped.
+- A new room is an empty workspace. Nothing is pre-created.
+- Any member may set, start, end and reset the contest clock. Only the controller touches the workspace.
+- Editing is paused while a client is disconnected, so nothing can be typed and then lost if control moved on.
+- Hosting: no spend for now. Own PC plus a free tunnel; a paid host is chosen later.
+- The extension stays outside the npm workspace (it has its own `package-lock.json`) because VS Code packaging does not handle hoisted dependencies.
 
-## Recommended Sub-Agent Split
+## Possible next steps
 
-For parallel work, keep write ownership disjoint:
+- Run the sandbox checklist and fix whatever it finds.
+- Show the controller's cursor and selection to observers.
+- Sample tests per problem (paste input and expected output, run all, show diffs).
+- Accounts and saved team history, if the tool gets regular use.
+- Publishing the extension to the Marketplace.
+- Importing a contest (for example from a Codeforces link), if a problem list is wanted again.
 
-- Backend agent: `backend/src/**`, backend tests, persistence/export behavior.
-- Frontend agent: `frontend/**`, web UI behavior, browser room interactions.
-- VS Code extension agent: `vscode-extension/**`, root `.vscode/**` only when
-  launch/tasks behavior changes.
-- Deployment agent: `Dockerfile`, `.dockerignore`, `render.yaml`,
-  `PUBLIC_DEPLOY.md`, deployment notes.
-- Documentation agent: `README.md`, `PROJECT_STATUS_AND_UPDATES.md`,
-  `docs/agent-modules/**`.
+## Working on it
 
-When assigning a sub-agent, give it:
-
-1. The relevant module brief.
-2. The source paths it owns.
-3. The validation command from `docs/agent-modules/validation.md`.
-4. The invariant that controller permissions are enforced by the backend.
-
-## Current Validation State
-
-Backend:
-
-```powershell
-cd backend
-npm.cmd test
-```
-
-Current backend test count:
-
-```text
-35 passing tests
-```
-
-VS Code extension:
-
-```powershell
-cd vscode-extension
-npm.cmd test
-```
-
-Current extension test count:
-
-```text
-25 passing tests
-```
-
-Compile-only check:
-
-```powershell
-cd vscode-extension
-npm.cmd run compile
-```
-
-The extension TypeScript compile currently passes.
-
-## Notes For Future Updates
-
-- Keep this file short and navigational.
-- Put detailed feature status in the matching module file.
-- If a change crosses module boundaries, update every affected module brief.
-- If a new sub-agent ownership area emerges, add a new file under
-  `docs/agent-modules/` and list it in the module map above.
+Commands are in the [README](./README.md). The invariant to protect in any change: the controller rule is enforced by the server (`backend/src/permissions.ts`, checked for every message in `backend/src/roomWebSocket.ts`), never only by the clients.
